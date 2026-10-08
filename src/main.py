@@ -1,656 +1,628 @@
+"""Learn2Slither - Snake Reinforcement Learning.
+
+Main entry point handling CLI arguments, execution modes, and orchestration
+between Environment, Interpreter, Agent, and GUI.
+"""
+
+import argparse
+import json
 import os
-# ∵ no audio, use dummy audio driver to avoid pygame error
-os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
-import pygame
-import sys
-import threading
-import math
-from ui import i18n
-from config.game import (
-    BLACK, WHITE,
-    MODE_STANDARD,
-    MODE_DECAY,
-    MODE_POWER,
-    MODE_STAR,
-    MODE_LIMITLESS,
-    MODE_EVERYTHING
-)
-from config.ui import (WINDOW_WIDTH, WINDOW_HEIGHT)
-from config.bonus import (POWER_BOMB, POWER_CROSS, POWER_DIAGONAL)
-from core.game import Game
-from ai.ai import AI
-from ai.heuristic import _score_player
-from ui.gui import GUI, _load_font, _load_emoji_font
-from rules.bonus import get_rules_for_mode
+import random
+import time
+
+# Action definitions
+UP = 0
+LEFT = 1
+DOWN = 2
+RIGHT = 3
+ACTION_NAMES = ["UP", "LEFT", "DOWN", "RIGHT"]
+ACTION_DELTAS = {
+    UP: (-1, 0),
+    LEFT: (0, -1),
+    DOWN: (1, 0),
+    RIGHT: (0, 1),
+}
+
+# Vision Characters (42 Subject Specification)
+CHAR_WALL = "W"
+CHAR_HEAD = "H"
+CHAR_BODY = "S"
+CHAR_GREEN = "G"
+CHAR_RED = "R"
+CHAR_EMPTY = "0"
 
 
-MODE_AI    = "ai"
-MODE_HUMAN = "human"
+class SnakeEnvironment:
+    """10x10 Snake Environment following 42 Subject specifications."""
+
+    def __init__(self, board_size=10):
+        self.board_size = board_size
+        self.snake = []
+        self.green_apples = []
+        self.red_apple = None
+        self.duration = 0
+        self.max_length = 3
+        self.game_over = False
+
+    def reset(self):
+        """Reset environment with contiguous 3-cell snake and apples."""
+        self.duration = 0
+        self.game_over = False
+        self.snake = self._generate_contiguous_snake(length=3)
+        self.max_length = len(self.snake)
+
+        # Place 2 green apples and 1 red apple
+        occupied = set(self.snake)
+        self.green_apples = []
+        for _ in range(2):
+            g_pos = self._random_empty_cell(occupied)
+            self.green_apples.append(g_pos)
+            occupied.add(g_pos)
+
+        self.red_apple = self._random_empty_cell(occupied)
+        return self.get_state()
+
+    def _generate_contiguous_snake(self, length=3):
+        """Generate a random contiguous snake inside board boundaries."""
+        dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        for _ in range(1000):
+            head_r = random.randint(1, self.board_size - 2)
+            head_c = random.randint(1, self.board_size - 2)
+            snake = [(head_r, head_c)]
+
+            valid = True
+            for _ in range(length - 1):
+                neighbors = []
+                last_r, last_c = snake[-1]
+                random.shuffle(dirs)
+                for dr, dc in dirs:
+                    nr, nc = last_r + dr, last_c + dc
+                    if 0 <= nr < self.board_size and 0 <= nc < self.board_size:
+                        if (nr, nc) not in snake:
+                            neighbors.append((nr, nc))
+                if not neighbors:
+                    valid = False
+                    break
+                snake.append(neighbors[0])
+
+            if valid and len(snake) == length:
+                return snake
+
+        # Fallback default contiguous snake in center
+        mid = self.board_size // 2
+        return [(mid, mid), (mid + 1, mid), (mid + 2, mid)]
+
+    def _random_empty_cell(self, occupied):
+        """Find a random empty cell not in occupied set."""
+        empty_cells = [
+            (r, c)
+            for r in range(self.board_size)
+            for c in range(self.board_size)
+            if (r, c) not in occupied
+        ]
+        if not empty_cells:
+            return (0, 0)
+        return random.choice(empty_cells)
+
+    def get_vision_cross_string(self):
+        """Generate terminal cross vision matching subject specification."""
+        if not self.snake:
+            return ""
+
+        head_r, head_c = self.snake[0]
+        body_set = set(self.snake[1:])
+        green_set = set(self.green_apples)
+
+        def cell_char(r, c):
+            pos = (r, c)
+            if pos == (head_r, head_c):
+                return CHAR_HEAD
+            if pos in body_set:
+                return CHAR_BODY
+            if pos in green_set:
+                return CHAR_GREEN
+            if pos == self.red_apple:
+                return CHAR_RED
+            return CHAR_EMPTY
+
+        # UP ray from Wall (row -1) to cell above head (head_r - 1)
+        up_chars = [CHAR_WALL]
+        for r in range(head_r):
+            up_chars.append(cell_char(r, head_c))
+
+        # DOWN ray from cell below head (head_r + 1) to Wall (row board_size)
+        down_chars = []
+        for r in range(head_r + 1, self.board_size):
+            down_chars.append(cell_char(r, head_c))
+        down_chars.append(CHAR_WALL)
+
+        # LEFT ray from Wall (col -1) to cell left of head (head_c - 1)
+        left_chars = [CHAR_WALL]
+        for c in range(head_c):
+            left_chars.append(cell_char(head_r, c))
+
+        # RIGHT ray from cell right of head (head_c + 1) to Wall (col board_size)
+        right_chars = []
+        for c in range(head_c + 1, self.board_size):
+            right_chars.append(cell_char(head_r, c))
+        right_chars.append(CHAR_WALL)
+
+        indent = " " * len(left_chars)
+        lines = []
+
+        # Print UP ray characters
+        for ch in up_chars:
+            lines.append(f"{indent}{ch}")
+
+        # Print horizontal line: LEFT + H + RIGHT
+        horiz_line = "".join(left_chars) + CHAR_HEAD + "".join(right_chars)
+        lines.append(horiz_line)
+
+        # Print DOWN ray characters
+        for ch in down_chars:
+            lines.append(f"{indent}{ch}")
+
+        return "\n".join(lines)
+
+    def get_state(self):
+        """Extract compact state feature tuple strictly from 4 visible rays.
+
+        Provides ONLY the information visible to the snake to strictly avoid
+        any -42 penalty.
+        """
+        if not self.snake:
+            return ()
+
+        head_r, head_c = self.snake[0]
+        body_set = set(self.snake[1:])
+        green_set = set(self.green_apples)
+
+        features = []
+        for action in (UP, LEFT, DOWN, RIGHT):
+            dr, dc = ACTION_DELTAS[action]
+
+            # 1. Immediate danger (distance 1)
+            adj_r, adj_c = head_r + dr, head_c + dc
+            danger = 0
+            if not (0 <= adj_r < self.board_size and 0 <= adj_c < self.board_size):
+                danger = 1
+            elif (adj_r, adj_c) in body_set:
+                danger = 1
+
+            # 2. Ray scan to find first visible item and green/red apple presence
+            first_item = CHAR_WALL
+            first_dist = 0
+            saw_green = 0
+            saw_red = 0
+            step = 1
+
+            while True:
+                curr_r, curr_c = head_r + dr * step, head_c + dc * step
+                if not (0 <= curr_r < self.board_size and 0 <= curr_c < self.board_size):
+                    if first_dist == 0:
+                        first_item = CHAR_WALL
+                        first_dist = step
+                    break
+
+                pos = (curr_r, curr_c)
+                if pos in body_set:
+                    if first_dist == 0:
+                        first_item = CHAR_BODY
+                        first_dist = step
+                elif pos in green_set:
+                    saw_green = 1
+                    if first_dist == 0:
+                        first_item = CHAR_GREEN
+                        first_dist = step
+                elif pos == self.red_apple:
+                    saw_red = 1
+                    if first_dist == 0:
+                        first_item = CHAR_RED
+                        first_dist = step
+
+                step += 1
+
+            # Discretize first obstacle distance: 1 (adjacent), 2 (near), 3 (far)
+            dist_bucket = min(first_dist, 3)
+            features.extend([danger, first_item, dist_bucket, saw_green, saw_red])
+
+        return tuple(features)
+
+    def step(self, action):
+        """Execute action, update state, and return (next_state, reward, done)."""
+        if self.game_over:
+            return self.get_state(), 0.0, True, {}
+
+        self.duration += 1
+        dr, dc = ACTION_DELTAS[action]
+        head_r, head_c = self.snake[0]
+        new_head = (head_r + dr, head_c + dc)
+
+        # 1. Wall collision
+        if not (0 <= new_head[0] < self.board_size and 0 <= new_head[1] < self.board_size):
+            self.game_over = True
+            return self.get_state(), -50.0, True, {"reason": "wall"}
+
+        # 2. Self collision (hitting any body segment except potentially tail being removed)
+        # In strict snake rules, hitting any current body part is game over
+        if new_head in self.snake[:-1]:
+            self.game_over = True
+            return self.get_state(), -50.0, True, {"reason": "self"}
+
+        reward = -0.1
+
+        # 3. Eating green apple
+        if new_head in self.green_apples:
+            self.snake.insert(0, new_head)
+            self.green_apples.remove(new_head)
+            occupied = set(self.snake) | set(self.green_apples)
+            if self.red_apple:
+                occupied.add(self.red_apple)
+            self.green_apples.append(self._random_empty_cell(occupied))
+            reward = 10.0
+        # 4. Eating red apple
+        elif new_head == self.red_apple:
+            self.snake.insert(0, new_head)
+            self.snake.pop()  # Normal head movement
+            if self.snake:
+                self.snake.pop()  # Length decrease by 1
+
+            if len(self.snake) == 0:
+                self.game_over = True
+                return self.get_state(), -50.0, True, {"reason": "zero_length"}
+
+            occupied = set(self.snake) | set(self.green_apples)
+            self.red_apple = self._random_empty_cell(occupied)
+            reward = -10.0
+        # 5. Normal movement
+        else:
+            self.snake.insert(0, new_head)
+            self.snake.pop()
+
+        self.max_length = max(self.max_length, len(self.snake))
+        return self.get_state(), reward, False, {}
 
 
-# ──────────────────────────────────────────────
-# Main game loop
-# ──────────────────────────────────────────────
-def run_game(mode_name=MODE_STANDARD, vs_mode=MODE_AI, gui=None):
-    """
-    Main game loop.
-    vs_mode: 'ai'    → Human (Black) vs AI (White)
-             'human' → Human vs Human
-    gui:  pass an existing GUI to reuse window.
-    """
-    rules = get_rules_for_mode(mode_name)
-    game = Game(rules)
+class QTableAgent:
+    """Q-learning agent for Snake decision making and persistence."""
 
-    if gui is None:
-        gui = GUI(WINDOW_WIDTH, WINDOW_HEIGHT)
-    else:
-        gui.hover_pos = None
+    def __init__(self, alpha=0.2, gamma=0.9, epsilon=0.2, dontlearn=False):
+        self.alpha = alpha
+        self.gamma = gamma
+        self.epsilon = 0.0 if dontlearn else epsilon
+        self.dontlearn = dontlearn
+        self.q_table = {}
 
-    ai                   = AI(WHITE)
-    ai_suggestion_engine = AI(BLACK)
-    ai_time              = 0.0
-    ai_thinking          = False
-    ai_result            = [None]
-    suggestion           = None
-    go_to_menu           = False
+    def get_q_values(self, state):
+        """Get or initialize Q-values for state."""
+        key = str(state)
+        if key not in self.q_table:
+            self.q_table[key] = [0.0, 0.0, 0.0, 0.0]
+        return self.q_table[key]
 
-    # Bonus Feature States
-    aide_on = False
-    power_active = False
-    power_types = [POWER_BOMB, POWER_CROSS, POWER_DIAGONAL]
-    power_idx = 0
+    def choose_action(self, state):
+        """Select action via epsilon-greedy strategy."""
+        if not self.dontlearn and random.random() < self.epsilon:
+            return random.choice([UP, LEFT, DOWN, RIGHT])
 
-    gui.set_status(i18n.get("game_started"))
+        q_vals = self.get_q_values(state)
+        max_q = max(q_vals)
+        # Break ties randomly to avoid directional bias
+        best_actions = [idx for idx, val in enumerate(q_vals) if val == max_q]
+        return random.choice(best_actions)
 
-    def compute_ai_move():
-        ai_result[0] = ai.get_best_move(game)
+    def update(self, state, action, reward, next_state, done):
+        """Update Q-table entry using Bellman equation."""
+        if self.dontlearn:
+            return
 
-    clock = pygame.time.Clock()
+        key = str(state)
+        curr_q = self.get_q_values(state)[action]
+        if done:
+            target = reward
+        else:
+            next_q_vals = self.get_q_values(next_state)
+            target = reward + self.gamma * max(next_q_vals)
 
-    while True:
-        # ── Events ──────────────────────────────────────
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+        self.q_table[key][action] = curr_q + self.alpha * (target - curr_q)
 
-            if event.type == pygame.VIDEORESIZE:
-                gui.handle_resize(event.w, event.h)
+    def save(self, filepath):
+        """Save Q-table to text file in subject specified format."""
+        dir_name = os.path.dirname(filepath)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as file:
+            json.dump(self.q_table, file, indent=2)
+        print(f"Save learning state in {filepath}")
 
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    if gui.guide_open:
-                        gui.close_guide()
-                        continue
-                    if power_active:
-                        power_active = False
-                        gui.set_status("")
-                        continue
-                    go_to_menu = True
-                    continue
+    def load(self, filepath):
+        """Load Q-table from text file in subject specified format."""
+        if not os.path.exists(filepath):
+            print(f"Warning: Model file {filepath} not found.")
+            return False
+        with open(filepath, "r", encoding="utf-8") as file:
+            self.q_table = json.load(file)
+        print(f"Load trained model from {filepath}")
+        return True
 
-                if event.key == pygame.K_n:
-                    # New Game / Restart
-                    game = Game(rules)
-                    ai.transposition_table.clear()
-                    ai_time     = 0.0
-                    ai_thinking = False
-                    ai_result   = [None]
-                    suggestion  = None
-                    power_active = False
-                    gui.set_status(i18n.get("game_started"))
-                    continue
 
-                if event.key == pygame.K_r:
-                    # Undo Move
-                    if game.history and not ai_thinking:
-                        success = False
-                        if (
-                            vs_mode == MODE_AI and
-                            len(game.history) >= 2 and
-                            game.current_player == BLACK
-                        ):
-                            game.undo()  # Pop AI move
-                            game.undo()  # Pop Human move
-                            success = True
-                        elif vs_mode == MODE_HUMAN and len(game.history) >= 1:
-                            game.undo()
-                            success = True
+def run_training_loop(env, agent, sessions, save_path=None):
+    """Ultra-fast training loop (visual off) without GUI or per-step terminal IO."""
+    overall_max_len = 0
+    overall_max_dur = 0
 
-                        if success:
-                            suggestion = None
-                            power_active = False
-                            gui.set_status(i18n.get("undo"))
-                            ai_time = 0.0
-                    continue
+    for _ in range(sessions):
+        state = env.reset()
+        done = False
 
-                if event.key == pygame.K_m:
-                    go_to_menu = True
+        while not done:
+            action = agent.choose_action(state)
+            next_state, reward, done, _ = env.step(action)
+            agent.update(state, action, reward, next_state, done)
+            state = next_state
 
-                if event.key == pygame.K_g:
-                    # Show/hide guide for current mode
-                    if gui.guide_open:
-                        gui.close_guide()
-                    else:
-                        guide_key = "guide_" + game.rules.name
-                        guide_text = i18n.get(guide_key)
-                        gui.show_guide(guide_text)
-                    continue
+        overall_max_len = max(overall_max_len, env.max_length)
+        overall_max_dur = max(overall_max_dur, env.duration)
+        print(f"Game over, max length = {env.max_length}, max duration = {env.duration}")
 
-                if event.key == pygame.K_l:
-                    i18n.cycle()
-                    gui.set_status(i18n.get("language") + ": " + i18n.current())
+    if save_path:
+        agent.save(save_path)
 
-                # Power stones rotation shortcuts: Tab to cycle, 1/2/3 to select directly
-                if (
-                    game.rules.power_stones and
-                    game.individual_captures.get(game.current_player, 0) >= 5
-                ):
-                    if event.key == pygame.K_TAB:
-                        power_idx = (power_idx + 1) % len(power_types)
-                        power_active = True
-                        gui.set_status(i18n.get("power_" + power_types[power_idx]))
-                    elif event.key in (pygame.K_1, pygame.K_KP1):
-                        power_idx = 0
-                        power_active = True
-                        gui.set_status(i18n.get("power_" + power_types[power_idx]))
-                    elif event.key in (pygame.K_2, pygame.K_KP2):
-                        power_idx = 1
-                        power_active = True
-                        gui.set_status(i18n.get("power_" + power_types[power_idx]))
-                    elif event.key in (pygame.K_3, pygame.K_KP3):
-                        power_idx = 2
-                        power_active = True
-                        gui.set_status(i18n.get("power_" + power_types[power_idx]))
+    return overall_max_len, overall_max_dur
 
-            if event.type == pygame.MOUSEMOTION:
-                gui.update_hover(event.pos)
 
-            if event.type == pygame.MOUSEWHEEL:
-                if (
-                    game.rules.power_stones and
-                    game.individual_captures.get(game.current_player, 0) >= 5
-                ):
-                    power_idx = (power_idx - event.y) % len(power_types)
-                    power_active = True
-                    gui.set_status(i18n.get("power_" + power_types[power_idx]))
+def run_visual_loop(env, agent, sessions, save_path=None, step_by_step=False):
+    """Visual demonstration loop with Pygame GUI and per-step terminal vision."""
+    pygame_available = False
+    screen = None
+    clock = None
 
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                # Scroll wheel cycling for power types (fallback for older pygame)
-                if power_active and event.button in (4, 5):
-                    power_idx = (power_idx + (1 if event.button == 5 else -1)) % len(power_types)
-                    gui.set_status(i18n.get("power_" + power_types[power_idx]))
-                    continue
+    # Colors
+    color_bg = (30, 30, 34)
+    color_grid = (50, 50, 55)
+    color_snake_head = (0, 160, 255)
+    color_snake_body = (30, 120, 220)
+    color_green_apple = (40, 200, 80)
+    color_red_apple = (230, 45, 45)
 
-                if event.button == 3:  # Right click
-                    if (
-                        game.rules.power_stones and
-                        game.individual_captures.get(game.current_player, 0) >= 5
-                    ):
-                        # In PvP, allow both black and white to activate power
-                        power_active = not power_active
-                        if power_active:
-                            gui.set_status(i18n.get("power_" + power_types[power_idx]))
-                        else:
-                            gui.set_status("")
-                    else:
-                        power_active = False
-                    continue
+    cell_size = 48
+    header_height = 60
+    board_px = env.board_size * cell_size
+    win_w = board_px
+    win_h = board_px + header_height
 
-                if event.button == 1:
-                    # Guide overlay click detection
-                    if gui.guide_open:
-                        if gui._guide_overlay_rect.collidepoint(event.pos):
-                            # Click inside guide box - consume click
-                            continue
-                        else:
-                            # Click outside guide box - close it
-                            gui.close_guide()
-                            continue
+    try:
+        import pygame
+        pygame.init()
+        pygame.display.set_caption("Learn2Slither - Snake")
+        screen = pygame.display.set_mode((win_w, win_h))
+        clock = pygame.time.Clock()
+        pygame_available = True
+        font = pygame.font.SysFont("monospace", 18, bold=True)
+    except Exception as exc:
+        print(f"Note: Running in terminal visualization mode ({exc})")
+        pygame_available = False
 
-                    # Language button click
-                    lang = gui.check_lang_click(event.pos)
-                    if lang:
-                        i18n.set_lang(lang)
-                        gui.set_status(i18n.get("language") + ": " + i18n.current())
-                        continue
+    fps = 10
+    paused = False
 
-                    # Menu button click
-                    if gui.check_menu_click(event.pos):
-                        go_to_menu = True
-                        continue
+    for sess_idx in range(sessions):
+        state = env.reset()
+        done = False
 
-                    # Aide button click
-                    if gui.check_aide_click(event.pos):
-                        aide_on = not aide_on
-                        if not aide_on:
-                            suggestion = None
-                            gui.aide_timer = 0
-                        elif vs_mode == MODE_HUMAN and not game.is_game_over():
-                            suggestion = ai_suggestion_engine.suggest_move(game)
-                            gui.set_status(i18n.get("suggest"))
-                        continue
+        while not done:
+            # Handle Pygame UI events
+            if pygame_available:
+                import pygame
+                step_triggered = not step_by_step
 
-                    # Guide button click
-                    if gui.check_guide_click(event.pos):
-                        guide_key = "guide_" + game.rules.name
-                        guide_text = i18n.get(guide_key)
-                        gui.show_guide(guide_text)
-                        continue
-
-                    # Board click handling with diagnostics and warnings
-                    cell = gui.handle_click(event.pos)
-                    if cell:
-                        if game.is_game_over():
-                            gui.show_warning(i18n.get("warn_game_over"))
-                            continue
-                        if ai_thinking:
-                            gui.show_warning(i18n.get("warn_ai_thinking"))
-                            continue
-                        if vs_mode == MODE_AI and game.current_player == WHITE:
-                            gui.show_warning(i18n.get("warn_not_your_turn"))
-                            continue
-
-                        row, col = cell
-                        p_type = power_types[power_idx] if power_active else None
-
-                        if game.place_stone(row, col, power_type=p_type):
-                            suggestion = None
-                            power_active = False
-                            # Reset Aide instantly on board change
-                            gui.aide_timer = 0
-
-                            if game.is_game_over():
-                                name = i18n.get("black") if game.winner == BLACK else i18n.get("white")
-                                gui.set_status(f'{name} {i18n.get("wins")}')
-                            elif vs_mode == MODE_AI and game.current_player == WHITE:
-                                ai_thinking = True
-                                ai_result[0] = None
-                                threading.Thread(target=compute_ai_move, daemon=True).start()
-                                gui.set_status(f'{i18n.get("ai_thinking")} (Depth: 10)')
-                            elif vs_mode == MODE_HUMAN:
-                                if aide_on:
-                                    suggestion = ai_suggestion_engine.suggest_move(game)
-                                    gui.set_status(i18n.get("suggest"))
-                                else:
-                                    suggestion = None
-                        else:
-                            # Move was invalid: diagnose reason and show user warning
-                            err = game.get_move_error(row, col, game.current_player)
-                            if err == "double_three":
-                                gui.show_warning(i18n.get("warn_double_three"))
-                            elif err == "occupied":
-                                gui.show_warning(i18n.get("warn_occupied"))
-                            elif err == "hole_forecast":
-                                gui.show_warning(i18n.get("warn_hole_forecast"))
-                            elif err == "meteor_crater":
-                                gui.show_warning(i18n.get("warn_meteor_crater"))
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        return
+                    if event.type == pygame.KEYDOWN:
+                        if event.key in (pygame.K_ESCAPE, pygame.K_q):
+                            pygame.quit()
+                            return
+                        if event.key == pygame.K_SPACE:
+                            if step_by_step:
+                                step_triggered = True
                             else:
-                                gui.show_warning(i18n.get("warn_occupied"))
+                                paused = not paused
+                        if event.key in (pygame.K_UP, pygame.K_EQUALS):
+                            fps = min(60, fps + 5)
+                        if event.key in (pygame.K_DOWN, pygame.K_MINUS):
+                            fps = max(1, fps - 5)
 
-        if go_to_menu:
-            return select_mode(gui)
+                if step_by_step and not step_triggered:
+                    clock.tick(30)
+                    continue
 
-        # ── AI move collection ───────────────────────────
-        if ai_thinking and ai_result[0] is not None:
-            row, col = ai_result[0]
-            if not game.is_game_over():
-                game.place_stone(row, col, WHITE)
-                ai_time     = ai.last_think_time
-                ai_thinking = False
-                if game.is_game_over():
-                    name = i18n.get("black") if game.winner == BLACK else i18n.get("white")
-                    gui.set_status(f'{name} {i18n.get("wins")}')
-                else:
-                    gui.set_status(f'AI ({row},{col}) {ai_time:.3f}s (d={ai.last_depth_reached})')
-            else:
-                ai_thinking = False
+                if paused and not step_by_step:
+                    clock.tick(15)
+                    continue
 
-        # ── Aide Checks ──────────────────────────────────
-        if aide_on and not game.is_game_over() and not ai_thinking:
-            # Determine the opponent (who just played) to check their threats
-            opponent = WHITE if game.current_player == BLACK else BLACK
+            # 1. Print cross vision to terminal before asking agent
+            vision_str = env.get_vision_cross_string()
+            print(vision_str)
 
-            # Show Aide if it's PvP, OR if it's vs AI and it's currently the human's turn (BLACK)
-            if (
-                vs_mode == MODE_HUMAN or
-                (vs_mode == MODE_AI and game.current_player == BLACK)
-            ):
-                opp_score = _score_player(game.board, opponent, 0)
-                if opp_score >= 10000:
-                    gui.show_aide_popup("UNO!", 3000)
-                elif opp_score >= 5000:
-                    gui.show_aide_popup("Threat", 3000)
+            # 2. Agent decides action
+            action = agent.choose_action(state)
 
-        # ── Render (single flip inside gui.draw) ─────────
-        curr_p_type = power_types[power_idx] if power_active else None
-        gui.draw(game, ai_time, vs_mode, suggestion if aide_on else None, aide_on,
-                 power_type=curr_p_type, power_hover=gui.hover_pos if power_active else None)
-        clock.tick(60)
+            # 3. Print action taken to terminal
+            print(f"\n{ACTION_NAMES[action]}\n")
 
-
-# ──────────────────────────────────────────────
-# Mode selection screen
-# ──────────────────────────────────────────────
-
-# Record the last vs index to remember player preference
-GLOBAL_VS_IDX = 0
-
-
-def select_mode(gui=None):
-    """
-    Mode selection screen. Layout: 3x2 grid of buttons + AI/PvP Slider.
-    """
-    if gui is None:
-        gui = GUI(WINDOW_WIDTH, WINDOW_HEIGHT)
-    screen = gui.screen
-    pygame.display.set_caption("Gomoku")
-
-    # Modes layout: 3x2 with your custom emojis!
-    mode_options = [
-        (MODE_STANDARD, "⚫⚪"), (MODE_LIMITLESS, "♾️"), (MODE_DECAY, "🪫"),
-        (MODE_POWER, "🪄"), (MODE_STAR, "🌠"), (MODE_EVERYTHING, "🔥")
-    ]
-
-    global GLOBAL_VS_IDX
-    vs_options = [("AI", MODE_AI), ("PvP", MODE_HUMAN)]
-    current_vs_idx = GLOBAL_VS_IDX
-
-    def get_layout(screen):
-        w, h = screen.get_size()
-        scale   = min(w / WINDOW_WIDTH, h / WINDOW_HEIGHT)
-        f_title = _load_font(max(16, int(32 * scale)), bold=True)
-        # Load bundled NotoEmoji font so menu icons look identical on all machines
-        f_icon  = _load_emoji_font(max(30, int(42 * scale)))
-        f_btn   = _load_font(max(12, int(18 * scale)), bold=True)
-        f_small = _load_font(max(12, int(14 * scale)), bold=True)
-
-        # 3x2 grid buttons
-        btn_w, btn_h = int(180 * scale), int(140 * scale)
-        gap_x, gap_y = int(20 * scale), int(20 * scale)
-        # Grid bounds
-        grid_w = 3 * btn_w + 2 * gap_x
-        start_x = w // 2 - grid_w // 2
-        start_y = int(h * 0.35)
-
-        btns = []
-        for i in range(2):
-            for j in range(3):
-                rect = pygame.Rect(
-                    start_x + j * (btn_w + gap_x),
-                    start_y + i * (btn_h + gap_y),
-                    btn_w,
-                    btn_h
-                )
-                btns.append(rect)
-
-        # Slider rect below title, above grid
-        sw, sh = int(300 * scale), int(40 * scale)
-        s_rect = pygame.Rect(w // 2 - sw // 2, int(h * 0.22), sw, sh)
-
-        # Language buttons top right (wider to fit flags and text)
-        lw, lh = int(110 * scale), int(35 * scale)
-        lgap   = 10
-        langs = i18n.LANGS
-        total = len(langs) * lw + (len(langs) - 1) * lgap
-        lx    = w - total - 20
-        ly    = 20
-        lang_btns = {lang: pygame.Rect(lx + i * (lw + lgap), ly, lw, lh)
-                     for i, lang in enumerate(langs)}
-
-        mode_icons = {}
-        if f_icon:
-            for m_id, icon_txt in mode_options:
+            # 4. In terminal-only step-by-step mode, wait for Enter
+            if step_by_step and not pygame_available:
                 try:
-                    if m_id == MODE_STANDARD:
-                        s_right = f_icon.render("⚪", True, (255, 220, 120))
-                        iw, ih = s_right.get_size()
-                        s_left = pygame.Surface((iw, ih), pygame.SRCALPHA)
-                        for y in range(ih):
-                            xs = [x for x in range(iw) if s_right.get_at((x, y))[3] > 60]
-                            if xs:
-                                min_x, max_x = min(xs), max(xs)
-                                for x in range(min_x + 1, max_x):
-                                    s_left.set_at((x, y), (255, 220, 120, 255))
-                        s_left.blit(s_right, (0, 0))
+                    input("[Press Enter for next step...]")
+                except (EOFError, KeyboardInterrupt):
+                    return
 
-                        combo = pygame.Surface((iw * 2 + 4, ih), pygame.SRCALPHA)
-                        combo.blit(s_left, (0, 0))
-                        combo.blit(s_right, (iw + 4, 0))
-                        mode_icons[m_id] = combo
-                    else:
-                        icon_surf = f_icon.render(icon_txt, True, (255, 220, 120))
-                        if icon_surf.get_width() > 0 and icon_surf.get_height() > 0:
-                            mode_icons[m_id] = icon_surf
-                except Exception:
-                    pass
+            # 5. Advance environment
+            next_state, reward, done, _ = env.step(action)
+            agent.update(state, action, reward, next_state, done)
+            state = next_state
 
-        return f_title, f_btn, f_small, btns, s_rect, lang_btns, mode_icons
+            # 6. Render Pygame GUI
+            if pygame_available:
+                import pygame
+                screen.fill(color_bg)
 
-    f_title, f_btn, f_small, buttons, s_rect, lang_btns, mode_icons = get_layout(screen)
-    clock = pygame.time.Clock()
+                # Header info
+                info_text = (
+                    f"Sess: {sess_idx + 1}/{sessions}  "
+                    f"Len: {len(env.snake)} (Max: {env.max_length})  "
+                    f"Dur: {env.duration}  Speed: {fps} FPS"
+                )
+                txt_surf = font.render(info_text, True, (240, 240, 240))
+                screen.blit(txt_surf, (12, 18))
 
-    while True:
-        w, h = screen.get_size()
-        screen.fill((30, 22, 14))
+                # Grid offset
+                ox, oy = 0, header_height
 
-        # Title
-        t_surf = f_title.render(i18n.get("title"), True, (200, 130, 50))
-        screen.blit(t_surf, (w // 2 - t_surf.get_width() // 2, int(h * 0.08)))
-
-        mx, my = pygame.mouse.get_pos()
-
-        # Slider rendering
-        pygame.draw.rect(screen, (50, 40, 30), s_rect, border_radius=20)
-        s_hovered = s_rect.collidepoint(mx, my)
-        slider_half = pygame.Rect(
-            s_rect.x if current_vs_idx == 0 else s_rect.x + s_rect.width // 2,
-            s_rect.y,
-            s_rect.width // 2,
-            s_rect.height
-        )
-        pygame.draw.rect(
-            screen,
-            (200, 130, 50) if not s_hovered else (220, 150, 70),
-            slider_half,
-            border_radius=20
-        )
-        pygame.draw.rect(screen, (100, 80, 50), s_rect, 2, border_radius=20)
-
-        # Slider texts
-        ltxt = f_btn.render(
-            "AI",
-            True,
-            (40, 20, 10) if current_vs_idx == 0 else (150, 140, 120)
-        )
-        rtxt = f_btn.render(
-            "PvP",
-            True,
-            (40, 20, 10) if current_vs_idx == 1 else (150, 140, 120)
-        )
-        screen.blit(ltxt, ltxt.get_rect(
-            center=(s_rect.x + s_rect.width // 4, s_rect.centery))
-        )
-        screen.blit(rtxt, rtxt.get_rect(
-            center=(s_rect.x + 3 * s_rect.width // 4, s_rect.centery))
-        )
-
-        # Mode buttons (3x2 grid)
-        for i, (m_id, _) in enumerate(mode_options):
-            rect = buttons[i]
-            hovered = rect.collidepoint(mx, my)
-            bg = (70, 50, 30) if hovered else (50, 35, 20)
-            bdr = (250, 180, 70) if hovered else (120, 90, 50)
-            pygame.draw.rect(screen, bg, rect, border_radius=10)
-            pygame.draw.rect(screen, bdr, rect, 3 if hovered else 1, border_radius=10)
-
-            # Draw Mode Icon (Emoji from test_emoji.py, with vector fallback)
-            ix, iy = rect.centerx, rect.centery - 20
-
-            icon_surf = mode_icons.get(m_id)
-            if icon_surf:
-                screen.blit(icon_surf, icon_surf.get_rect(center=(ix, iy)))
-            else:
-                if m_id == MODE_STANDARD:
-                    pygame.draw.circle(screen, (255, 220, 120), (ix-12, iy), 9)
-                    pygame.draw.circle(screen, (255, 220, 120), (ix+12, iy), 9, 2)
-                elif m_id == MODE_DECAY:
-                    # 🪫 Battery Icon
-                    pygame.draw.rect(
-                        screen,
-                        (100, 100, 100),
-                        (ix-12, iy-6, 24, 12),
-                        2,
-                        border_radius=2
-                    )
-                    pygame.draw.rect(screen, (100, 100, 100), (ix+12, iy-3, 3, 6))
-                    # Low charge red
-                    pygame.draw.rect(screen, (200, 50, 50), (ix-10, iy-4, 5, 8))
-                elif m_id == MODE_POWER:
-                    # 🪄 Magic Wand
-                    # handle
+                # Draw grid lines
+                for r in range(env.board_size + 1):
                     pygame.draw.line(
-                        screen,
-                        (100, 70, 50),
-                        (ix-10, iy+10),
-                        (ix+5, iy-5),
-                        4
+                        screen, color_grid,
+                        (ox, oy + r * cell_size),
+                        (ox + board_px, oy + r * cell_size), 1
                     )
-                    # tip
-                    pygame.draw.circle(screen, (255, 255, 255), (ix+8, iy-8), 4)
-                    # glow
-                    pygame.draw.circle(screen, (255, 255, 0), (ix+8, iy-8), 6, 1)
-                elif m_id == MODE_STAR:
-                    # 🌠 Shooting Star
-                    pygame.draw.polygon(
-                        screen,
-                        (255, 150, 50),
-                        [(ix-5, iy+5), (ix-25, iy+20), (ix-10, iy+30), (ix, iy+10)]
+                for c in range(env.board_size + 1):
+                    pygame.draw.line(
+                        screen, color_grid,
+                        (ox + c * cell_size, oy),
+                        (ox + c * cell_size, oy + board_px), 1
                     )
-                    pts = []
-                    for j in range(10):
-                        rr = 12 if j % 2 == 0 else 5
-                        ang = math.radians(j * 36 - 90)
-                        pts.append((ix + rr * math.cos(ang), iy + rr * math.sin(ang)))
-                    pygame.draw.polygon(screen, (255, 230, 50), pts)
-                elif m_id == MODE_LIMITLESS:
-                    # ♾️ Infinity symbol
-                    pygame.draw.circle(screen, (150, 210, 255), (ix-10, iy), 10, 2)
-                    pygame.draw.circle(screen, (150, 210, 255), (ix+10, iy), 10, 2)
-                elif m_id == MODE_EVERYTHING:
-                    # 🔥 Fire Emoji Replica
-                    pygame.draw.ellipse(screen, (220, 50, 20), (ix-12, iy-10, 24, 30))
-                    pygame.draw.ellipse(screen, (255, 150, 20), (ix-8, iy-2, 16, 20))
-                    pygame.draw.ellipse(screen, (255, 230, 50), (ix-4, iy+6, 8, 10))
 
-            t_surf = f_btn.render(i18n.get("mode_" + m_id), True, (210, 200, 180))
-            screen.blit(t_surf, t_surf.get_rect(center=(rect.centerx, rect.centery + 30)))
+                # Draw Green apples
+                for gr, gc in env.green_apples:
+                    rect = pygame.Rect(
+                        ox + gc * cell_size + 4, oy + gr * cell_size + 4,
+                        cell_size - 8, cell_size - 8
+                    )
+                    pygame.draw.rect(screen, color_green_apple, rect, border_radius=6)
 
-        # Language buttons (Top right)
-        for lang, rect in lang_btns.items():
-            active  = (lang == i18n.current())
-            hovered = rect.collidepoint(mx, my)
-            if active:
-                bg = (200, 130, 50)
-            elif hovered:
-                bg = (85, 62, 25)
+                # Draw Red apple
+                if env.red_apple:
+                    rr, rc = env.red_apple
+                    rect = pygame.Rect(
+                        ox + rc * cell_size + 4, oy + rr * cell_size + 4,
+                        cell_size - 8, cell_size - 8
+                    )
+                    pygame.draw.rect(screen, color_red_apple, rect, border_radius=6)
+
+                # Draw Snake body & head
+                for idx, (sr, sc) in enumerate(env.snake):
+                    rect = pygame.Rect(
+                        ox + sc * cell_size + 3, oy + sr * cell_size + 3,
+                        cell_size - 6, cell_size - 6
+                    )
+                    color = color_snake_head if idx == 0 else color_snake_body
+                    pygame.draw.rect(screen, color, rect, border_radius=5)
+
+                pygame.display.flip()
+                if not step_by_step:
+                    clock.tick(fps)
             else:
-                bg = (55, 42, 25)
-            border  = (255, 200, 80) if active else (95, 72, 42)
-            pygame.draw.rect(screen, bg, rect, border_radius=5)
-            pygame.draw.rect(screen, border, rect, 1, border_radius=5)
+                if not step_by_step:
+                    time.sleep(0.1)
 
-            # Manually Draw Flag before Text to guarantee visibility
-            fx, fy = rect.x + 8, rect.centery - 8
-            if lang == "EN":  # US Flag
-                # base red
-                pygame.draw.rect(screen, (200, 50, 50), (fx, fy, 22, 16))
-                # stripes
-                pygame.draw.rect(screen, (255, 255, 255), (fx, fy+2, 22, 3))
-                pygame.draw.rect(screen, (255, 255, 255), (fx, fy+7, 22, 3))
-                pygame.draw.rect(screen, (255, 255, 255), (fx, fy+12, 22, 3))
-                # blue canton
-                pygame.draw.rect(screen, (50, 50, 150), (fx, fy, 11, 8))
-            elif lang == "FR":  # France Flag
-                pygame.draw.rect(screen, (40, 80, 180), (fx, fy, 7, 16))
-                pygame.draw.rect(screen, (255, 255, 255), (fx+7, fy, 8, 16))
-                pygame.draw.rect(screen, (220, 40, 50), (fx+15, fy, 7, 16))
-            elif lang == "ZH":  # Taiwan Flag
-                pygame.draw.rect(screen, (220, 30, 30), (fx, fy, 22, 16))
-                pygame.draw.rect(screen, (30, 40, 160), (fx, fy, 11, 8))
-                pygame.draw.circle(screen, (255, 255, 255), (fx+5, fy+4), 3)
+        print(f"Game over, max length = {env.max_length}, max duration = {env.duration}")
 
-            lsurf = f_small.render(
-                i18n.LANG_LABELS.get(lang, lang),
-                True,
-                (235, 225, 210)
-            )
-            screen.blit(lsurf, lsurf.get_rect(midleft=(fx + 28, rect.centery)))
+    if pygame_available:
+        import pygame
+        pygame.quit()
 
-        pygame.display.flip()
-        clock.tick(60)
+    if save_path:
+        agent.save(save_path)
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            if event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_q, pygame.K_ESCAPE):
-                    pygame.quit()
-                    sys.exit()
-                if event.key == pygame.K_l:
-                    i18n.cycle()
-                    (
-                        f_title,
-                        f_btn,
-                        f_small,
-                        buttons,
-                        s_rect,
-                        lang_btns,
-                        mode_icons
-                    ) = get_layout(screen)
 
-            if event.type == pygame.VIDEORESIZE:
-                gui.handle_resize(event.w, event.h)
-                screen = gui.screen
-                (
-                    f_title,
-                    f_btn,
-                    f_small,
-                    buttons,
-                    s_rect,
-                    lang_btns,
-                    mode_icons
-                ) = get_layout(screen)
+def parse_args():
+    """Parse CLI arguments supporting both single-dash and double-dash flags."""
+    parser = argparse.ArgumentParser(
+        description="Learn2Slither - Snake Reinforcement Learning with Q-learning"
+    )
+    parser.add_argument(
+        "-sessions", "--sessions",
+        type=int,
+        default=1,
+        help="Number of training / evaluation sessions"
+    )
+    parser.add_argument(
+        "-save", "--save",
+        type=str,
+        default=None,
+        help="Path to save trained Q-learning model"
+    )
+    parser.add_argument(
+        "-load", "--load",
+        type=str,
+        default=None,
+        help="Path to load pre-trained Q-learning model"
+    )
+    parser.add_argument(
+        "-visual", "--visual",
+        type=str,
+        choices=["on", "off"],
+        default="on",
+        help="Enable ('on') or disable ('off') visual GUI and terminal vision"
+    )
+    parser.add_argument(
+        "-dontlearn", "--dontlearn",
+        action="store_true",
+        default=False,
+        help="Exploitation without learning: Q-values are not updated"
+    )
+    parser.add_argument(
+        "-step-by-step", "--step-by-step",
+        dest="step_by_step",
+        action="store_true",
+        default=False,
+        help="Wait for user input before executing each step"
+    )
+    parser.add_argument(
+        "-board-size", "--board-size",
+        dest="board_size",
+        type=int,
+        default=10,
+        help="Board size dimension (default: 10)"
+    )
 
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # Language click
-                for lang, rect in lang_btns.items():
-                    if rect.collidepoint(event.pos):
-                        i18n.set_lang(lang)
-                        (
-                            f_title,
-                            f_btn,
-                            f_small,
-                            buttons,
-                            s_rect,
-                            lang_btns,
-                            mode_icons
-                        ) = get_layout(screen)
-                        break
+    return parser.parse_args()
 
-                # Slider click
-                if s_rect.collidepoint(event.pos):
-                    current_vs_idx = 1 - current_vs_idx
-                    GLOBAL_VS_IDX = current_vs_idx
 
-                # Mode click
-                for i, (m_id, _) in enumerate(mode_options):
-                    if buttons[i].collidepoint(event.pos):
-                        vs_mode = vs_options[current_vs_idx][1]
-                        return run_game(m_id, vs_mode, gui)
+def main():
+    """Main launcher configuring environment, agent, and selected loop."""
+    args = parse_args()
+
+    # Initialize Environment
+    env = SnakeEnvironment(board_size=args.board_size)
+
+    # Initialize Q-learning Agent
+    agent = QTableAgent(dontlearn=args.dontlearn)
+
+    # Load model if requested
+    if args.load:
+        agent.load(args.load)
+
+    # Dispatch to appropriate execution loop
+    if args.visual == "off":
+        run_training_loop(
+            env=env,
+            agent=agent,
+            sessions=args.sessions,
+            save_path=args.save
+        )
+    else:
+        run_visual_loop(
+            env=env,
+            agent=agent,
+            sessions=args.sessions,
+            save_path=args.save,
+            step_by_step=args.step_by_step
+        )
 
 
 if __name__ == "__main__":
-    gui = GUI(WINDOW_WIDTH, WINDOW_HEIGHT)
-    select_mode(gui)
+    main()

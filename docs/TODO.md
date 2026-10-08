@@ -136,11 +136,11 @@ Learn2Slither/
 ## 4. 現有檔案去留清單 (From 5eyes to Learn2Slither)
 
 ### ✏️ 需保留並改造檔案
-- [ ] **`Makefile`**：
-  - 將目標可執行檔名 `Gomoku` 改為 `snake`。
+- [x] **`Makefile`**：
+  - 將目標可執行檔名 Gomoku 改為 `snake`。
   - 調整執行腳本，保持專案根目錄為 Working Directory，確保 `./models/` 檔案定位正確。
-  - 加入 `lint` 目標執行 `flake8`。
-- [ ] **`src/main.py`**：
+  - 保留 `norm` 目標執行 flake8（不使用 `lint`）。
+- [x] **`src/main.py`**：
   - 改寫 CLI 參數解析，支援 `-sessions`, `-save`, `-load`, `-visual`, `-dontlearn`, `-step-by-step`。
   - 控制訓練迴圈（極速模式）與展示迴圈（Pygame GUI + Terminal 視野）。
 - [ ] **`src/config/game.py`**：

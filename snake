@@ -1,0 +1,5 @@
+#!/bin/bash
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$BASE_DIR" || exit 1
+export PYTHONPATH="$BASE_DIR/src:$PYTHONPATH"
+exec python3 "$BASE_DIR/src/main.py" "$@"
