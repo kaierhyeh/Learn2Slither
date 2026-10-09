@@ -149,7 +149,10 @@ class Environment:
             # 1. Immediate danger at distance 1
             adj_r, adj_c = head_r + dr, head_c + dc
             danger = 0
-            if not (0 <= adj_r < self.board_size and 0 <= adj_c < self.board_size):
+            if not (
+                0 <= adj_r < self.board_size and
+                0 <= adj_c < self.board_size
+            ):
                 danger = 1
             elif (adj_r, adj_c) in body_set:
                 danger = 1
@@ -163,7 +166,10 @@ class Environment:
 
             while True:
                 curr_r, curr_c = head_r + dr * step, head_c + dc * step
-                if not (0 <= curr_r < self.board_size and 0 <= curr_c < self.board_size):
+                if not (
+                    0 <= curr_r < self.board_size and
+                    0 <= curr_c < self.board_size
+                ):
                     if first_dist == 0:
                         first_item = CHAR_WALL
                         first_dist = step

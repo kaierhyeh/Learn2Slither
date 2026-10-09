@@ -86,7 +86,7 @@ fclean: clean
 re: fclean all
 
 ff norm:
-	@$(PYTHON) -m flake8 --max-line-length=100 --ignore=E203,W503 $(SRCDIR)
+	@$(PYTHON) -m flake8 $(SRCDIR)
 
 test:
 	@printf "$(CYAN)→ Running unit tests in $(TESTDIR)...$(NOCOLOR)\n"

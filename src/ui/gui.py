@@ -178,7 +178,12 @@ class UI:
                 self.cell_size - 8,
                 self.cell_size - 8,
             )
-            pygame.draw.rect(self.screen, COLOR_GREEN_APPLE, rect, border_radius=6)
+            pygame.draw.rect(
+                self.screen,
+                COLOR_GREEN_APPLE,
+                rect,
+                border_radius=6
+            )
 
         # 4. Red apple
         if env.red_apple:
@@ -189,7 +194,12 @@ class UI:
                 self.cell_size - 8,
                 self.cell_size - 8,
             )
-            pygame.draw.rect(self.screen, COLOR_RED_APPLE, rect, border_radius=6)
+            pygame.draw.rect(
+                self.screen,
+                COLOR_RED_APPLE,
+                rect,
+                border_radius=6
+            )
 
         # 5. Snake body & head
         for idx, (sr, sc) in enumerate(env.snake):
