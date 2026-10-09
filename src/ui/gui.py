@@ -1,903 +1,221 @@
-import pygame
-import pygame.gfxdraw
-import os
-import math
-from ui import i18n
-from config.game import (BOARD_SIZE, EMPTY, BLACK, WHITE, HOLE)
-from config.ui import (CELL_SIZE, BOARD_MARGIN, WINDOW_WIDTH, WINDOW_HEIGHT, COLOR_BG, COLOR_LINE, COLOR_PANEL_BG, COLOR_TEXT, COLOR_ACCENT)
-from config.bonus import (POWER_BOMB, POWER_CROSS, POWER_DIAGONAL)
+"""Pygame Graphical User Interface"""
 
-PANEL_X_DEFAULT = BOARD_MARGIN + CELL_SIZE * (BOARD_SIZE - 1) + BOARD_MARGIN
+from typing import Optional, Tuple
 
-
-# ──────────────────────────────────────────────
-# CJK-capable font loader
-# ──────────────────────────────────────────────
-def _load_font(size, bold=False):
-    """
-    Load a font that supports CJK characters (needed for Traditional Chinese).
-    Tries common paths on Ubuntu/WSL, falls back to pygame default.
-    """
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    cjk_paths = [
-        os.path.join(base_dir, "assets", "fonts", "NotoSansTC-Regular.otf"),
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]
-    for path in cjk_paths:
-        if os.path.exists(path):
-            try:
-                f = pygame.font.Font(path, size)
-                # Pygame file-based fonts do not support bold easily without rendering issues,
-                # but we MUST return the CJK font to support Chinese characters.
-                return f
-            except Exception:
-                pass
-    return pygame.font.SysFont("dejavusans", size, bold=bold)
+from config.ui import (
+    CELL_SIZE,
+    COLOR_BG,
+    COLOR_GREEN_APPLE,
+    COLOR_GRID,
+    COLOR_RED_APPLE,
+    COLOR_SNAKE_BODY,
+    COLOR_SNAKE_HEAD,
+    COLOR_TEXT,
+    HEADER_HEIGHT,
+    KEY_TO_DIR,
+)
 
 
-def _load_emoji_font(size):
-    """
-    Load the bundled NotoEmoji font so menu emoji icons render identically
-    across all machines regardless of system-installed emoji libraries.
-    """
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    emoji_paths = [
-        os.path.join(base_dir, "assets", "fonts", "NotoEmoji-Regular.ttf"),
-        "/usr/share/fonts/google-noto-emoji-fonts/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
-    ]
-    for path in emoji_paths:
-        if os.path.exists(path):
-            try:
-                return pygame.font.Font(path, size)
-            except Exception:
-                pass
-    return pygame.font.SysFont(
-        "notoemoji,symbola,segoeuiemoji,applecoloremoji,dejavusans,freesans", size
-    )
+class UI:
+    """User interface managing Pygame rendering, HUD, and keyboard inputs."""
 
+    def __init__(
+        self,
+        board_size: int = 10,
+        cell_size: int = CELL_SIZE,
+        header_height: int = HEADER_HEIGHT,
+    ):
+        self.board_size = board_size
+        self.cell_size = cell_size
+        self.header_height = header_height
+        self.board_px = board_size * cell_size
+        self.win_w = self.board_px
+        self.win_h = self.board_px + header_height
 
-def _split_text_and_emojis(text):
-    """
-    Split a string into alternating segments of (substring, is_emoji),
-    allowing dual-font rendering (e.g., CJK font for text and NotoEmoji for symbols).
-    """
-    if not text:
-        return []
-    chunks = []
-    curr = []
-    curr_is_emoji = None
-    for c in text:
-        cp = ord(c)
-        emoji_flag = (0x1F000 <= cp <= 0x1FAFF or 0x2600 <= cp <= 0x27BF or cp in (0xFE0E, 0xFE0F))
-        if curr_is_emoji is None:
-            curr_is_emoji = emoji_flag
-            curr.append(c)
-        elif emoji_flag == curr_is_emoji:
-            curr.append(c)
-        else:
-            chunks.append(("".join(curr), curr_is_emoji))
-            curr = [c]
-            curr_is_emoji = emoji_flag
-    if curr:
-        chunks.append(("".join(curr), curr_is_emoji))
-    return chunks
+        self.available = False
+        self.screen = None
+        self.clock = None
+        self.font = None
+        self.small_font = None
 
+        self._init_pygame()
 
-class GUI:
-    """
-    Pygame graphical interface for Gomoku.
-    Features: 3D marble stones, i18n panel, CJK font support, resizable window.
-    """
-
-    def __init__(self, win_w=WINDOW_WIDTH, win_h=WINDOW_HEIGHT):
-        if not pygame.get_init():
-            pygame.init()
-        self.win_w = win_w
-        self.win_h = win_h
-        if pygame.display.get_surface() is None:
-            self.screen = pygame.display.set_mode((self.win_w, self.win_h), pygame.RESIZABLE)
-        else:
-            self.screen = pygame.display.get_surface()
-        pygame.display.set_caption("Gomoku")
-        self._load_fonts()
-        self._panel_x   = PANEL_X_DEFAULT
-        self.hover_pos  = None
-        self.status_msg = ""
-        self.aide_msg = ""
-        self.aide_timer = 0
-        self.warning_msg = ""
-        self.warning_timer = 0
-
-        # Clickable rects — pre-populated with empty defaults so first-frame clicks are safe
-        self._lang_rects = {lang: pygame.Rect(0, 0, 0, 0) for lang in i18n.LANGS}
-        self._menu_rect  = pygame.Rect(0, 0, 0, 0)
-        self._aide_rect = pygame.Rect(0, 0, 0, 0)
-        self._guide_rect = pygame.Rect(0, 0, 0, 0)
-        self._guide_overlay_rect = pygame.Rect(0, 0, 0, 0)
-        self.guide_msg = ""
-        self.guide_open = False
-
-    # ──────────────────────────────────────────────
-    # Fonts
-    # ──────────────────────────────────────────────
-
-    def _load_fonts(self):
-        scale = min(self.win_w / WINDOW_WIDTH, self.win_h / WINDOW_HEIGHT)
-        # Larger base sizes than before (user feedback: fonts too small)
-        self.font_title = _load_font(max(16, int(28 * scale)), bold=True)
-        self.font_med   = _load_font(max(12, int(20 * scale)), bold=True)
-        self.font_small = _load_font(max(10, int(15 * scale)), bold=True)
+    def _init_pygame(self) -> None:
+        """Attempt to initialize pygame display and font subsystem."""
         try:
-            self.font_emoji_small = _load_emoji_font(max(10, int(15 * scale)))
-            f_hole = _load_emoji_font(max(16, int(28 * scale)))
-            self._hole_surf = f_hole.render("🕳️", True, (45, 30, 18))
-        except Exception:
-            self.font_emoji_small = None
-            self._hole_surf = None
+            import pygame
 
-    def handle_resize(self, new_w, new_h):
-        self.win_w = max(new_w, 600)
-        self.win_h = max(new_h, 500)
-        self.screen = pygame.display.set_mode((self.win_w, self.win_h), pygame.RESIZABLE)
-        self._load_fonts()
+            pygame.init()
+            pygame.display.set_caption("Learn2Slither")
+            self.screen = pygame.display.set_mode((self.win_w, self.win_h))
+            self.clock = pygame.time.Clock()
+            self.font = pygame.font.SysFont("monospace", 18, bold=True)
+            self.small_font = pygame.font.SysFont("monospace", 13)
+            self.available = True
+        except Exception as exc:
+            print(f"Note: Running in terminal visualization mode ({exc})")
+            self.available = False
 
-    # ──────────────────────────────────────────────
-    # Scale helpers
-    # ──────────────────────────────────────────────
+    def handle_events(
+        self,
+        step_by_step: bool,
+        paused: bool,
+        fps: int,
+    ) -> Tuple[bool, bool, bool, Optional[str], int]:
+        """Poll pygame events and return state changes.
 
-    def _scale(self):
-        scale  = min(self.win_w / WINDOW_WIDTH, self.win_h / WINDOW_HEIGHT)
-        cell   = max(8, int(CELL_SIZE * scale))
-        margin = max(10, int(BOARD_MARGIN * scale))
-        return cell, margin
-
-    def grid_to_pixel(self, row, col):
-        cell, margin = self._scale()
-        return (margin + col * cell, margin + row * cell)
-
-    def pixel_to_grid(self, px, py):
-        cell, margin = self._scale()
-        col = round((px - margin) / cell)
-        row = round((py - margin) / cell)
-        if 0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE:
-            cx, cy = self.grid_to_pixel(row, col)
-            if abs(px - cx) <= cell // 2 and abs(py - cy) <= cell // 2:
-                return (row, col)
-        return None
-
-    # ──────────────────────────────────────────────
-    # 3D marble stone renderer
-    # ──────────────────────────────────────────────
-
-    def _draw_stone(self, surface, cx, cy, radius, is_black,
-                    age_label=None, cracked=False):
+        Returns:
+            (should_quit, step_triggered, paused, manual_action, fps)
         """
-        Render a 3D marble-style stone.
-        Shadow radius is strictly < stone radius so it can never bleed outside.
-        age_label: str rendered inside stone when lifespan countdown is active.
-        cracked:   draw crack lines when stone is about to expire.
-        """
-        if is_black:
-            base   = (28, 28, 38)
-            rim    = (10, 10, 18)
-        else:
-            base   = (240, 242, 245)
-            rim    = (200, 200, 200)
+        if not self.available:
+            return False, True, paused, None, fps
 
-        # Drop shadow — MUST be strictly inside the stone's footprint.
-        # With offset (ox, oy), shad_r <= radius - max(ox, oy) guarantees full coverage.
-        ox, oy = 3, 4
-        shad_r = max(1, radius - max(ox, oy) - 1)
-        shad   = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-        pygame.gfxdraw.filled_circle(shad, radius - ox, radius - oy,
-                                     shad_r, (0, 0, 0, 65))
-        surface.blit(shad, (cx - radius + ox, cy - radius + oy))
+        import pygame
 
-        # Base stone
-        pygame.gfxdraw.filled_circle(surface, cx, cy, radius, base)
-        pygame.gfxdraw.aacircle(surface, cx, cy, radius, base)
+        should_quit = False
+        step_triggered = not step_by_step
+        manual_action = None
 
-        # Rim: two aa passes for a crisp edge (no blitted surface = no grey bleed)
-        pygame.gfxdraw.aacircle(surface, cx, cy, radius,     rim)
-        if radius > 8:
-            pygame.gfxdraw.aacircle(surface, cx, cy, radius - 1, rim)
+        active_key_to_dir = KEY_TO_DIR if KEY_TO_DIR else {
+            pygame.K_UP: "UP",
+            pygame.K_w: "UP",
+            pygame.K_LEFT: "LEFT",
+            pygame.K_a: "LEFT",
+            pygame.K_DOWN: "DOWN",
+            pygame.K_s: "DOWN",
+            pygame.K_RIGHT: "RIGHT",
+            pygame.K_d: "RIGHT",
+        }
 
-        # Soft Specular Highlight (Soft glow upper-left)
-        hl_r = int(radius * 0.4)
-        if is_black:
-            pygame.gfxdraw.filled_circle(surface, cx - int(radius * 0.3), cy - int(radius * 0.3), hl_r, (255, 255, 255, 45))
-            # No micro glint for black stones (match white style)
-        else:
-            # Drop the strip, just an inner soft gradient feel
-            pygame.gfxdraw.filled_circle(surface, cx - int(radius * 0.2), cy - int(radius * 0.2), hl_r, (255, 255, 255, 180))
-            # Micro glint (core brightness)
-            gr = max(1, radius // 8)
-            pygame.gfxdraw.filled_circle(surface, cx - int(radius * 0.35), cy - int(radius * 0.35), gr, (255, 255, 255, 240))
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return True, False, paused, None, fps
 
-        # Decay visuals
-        if cracked and radius >= 6:
-            self._draw_cracks(surface, cx, cy, radius, is_black)
-        if age_label and radius >= 9:
-            col_txt = (255, 60, 60) if is_black else (220, 30, 30)
-            try:
-                # Use cached font for performance
-                fnt = self.font_med
-                ts  = fnt.render(age_label, True, col_txt)
-                surface.blit(ts, ts.get_rect(center=(cx, cy + radius // 6)))
-            except Exception:
-                pass
+            if event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_ESCAPE, pygame.K_q):
+                    return True, False, paused, None, fps
 
-    def _draw_cracks(self, surface, cx, cy, radius, is_black):
-        """Draw a single grey thunder/lightning crack on one corner."""
-        col = (110, 110, 110) if is_black else (140, 140, 140)
+                if event.key == pygame.K_SPACE:
+                    if step_by_step:
+                        step_triggered = True
+                    else:
+                        paused = not paused
+                elif event.key in active_key_to_dir:
+                    manual_action = active_key_to_dir[event.key]
+                    if step_by_step:
+                        step_triggered = True
+                elif event.key in (
+                    pygame.K_EQUALS,
+                    pygame.K_PLUS,
+                    pygame.K_KP_PLUS,
+                    pygame.K_RIGHTBRACKET,
+                ):
+                    fps = min(60, fps + 5)
+                elif event.key in (
+                    pygame.K_MINUS,
+                    pygame.K_KP_MINUS,
+                    pygame.K_LEFTBRACKET,
+                ):
+                    fps = max(1, fps - 5)
 
-        # Tapering crack from top-right down to center
-        # Creates a thick top right origin snapping inward to thinner cracks
-        thick = max(2, radius // 4)
-        pts = [
-            (cx + int(radius * 0.6), cy - int(radius * 0.6)),
-            (cx + int(radius * 0.6) + thick, cy - int(radius * 0.6)),
-            (cx + int(radius * 0.3) + thick//2, cy - int(radius * 0.1)),
-            (cx + int(radius * 0.4), cy + int(radius * 0.2)),
-            (cx - int(radius * 0.1), cy + int(radius * 0.5)),
-            (cx + int(radius * 0.3), cy - int(radius * 0.1))
-        ]
-        pygame.draw.polygon(surface, col, pts)
+        return should_quit, step_triggered, paused, manual_action, fps
 
-        # Small branch
-        pygame.draw.line(surface, col, (cx + int(radius * 0.3), cy - int(radius * 0.1)),
-                         (cx + int(radius * 0.6), cy + int(radius * 0.4)), 1)
+    def render(
+        self,
+        env,
+        sess_idx: int,
+        sessions: int,
+        fps: int,
+        step_by_step: bool,
+        paused: bool,
+    ) -> None:
+        """Render board, apples, snake, and HUD to screen."""
+        if not self.available or self.screen is None:
+            return
 
-    # ──────────────────────────────────────────────
-    # Main draw (single call per frame — one flip only)
-    # ──────────────────────────────────────────────
-
-    def draw(self, game, ai_time, mode, suggestion=None, aide_on=False,
-             power_type=None, power_hover=None):
-        """Render one complete frame. Includes win overlay if game is over."""
-        cell, margin = self._scale()
-        self._panel_x = margin + cell * (BOARD_SIZE - 1) + margin
+        import pygame
 
         self.screen.fill(COLOR_BG)
-        self._draw_grid(cell, margin)
-        self._draw_star_points(cell, margin)
 
-        if game.rules.shooting_star:
-            self._draw_holes(game, cell, margin)
+        # 1. Header info
+        mode_str = "STEP" if step_by_step else ("PAUSE" if paused else "AUTO")
+        info_text = (
+            f"Sess: {sess_idx + 1}/{sessions}  "
+            f"Len: {len(env.snake)} (Max: {env.max_length})  "
+            f"Dur: {env.duration}  {fps}FPS [{mode_str}]"
+        )
+        txt_surf = self.font.render(info_text, True, COLOR_TEXT)
+        self.screen.blit(txt_surf, (12, 10))
 
-        self._draw_stones(game, cell, margin)
+        hint_text = "[SPACE]: Step/Pause | [ARROWS/WASD]: Move | [+/-]: Speed"
+        hint_surf = self.small_font.render(hint_text, True, (160, 160, 170))
+        self.screen.blit(hint_surf, (12, 34))
 
-        if self.hover_pos and not game.is_game_over() and not power_type:
-            self._draw_hover(self.hover_pos, cell)
+        # 2. Grid lines
+        ox, oy = 0, self.header_height
+        for r in range(self.board_size + 1):
+            pygame.draw.line(
+                self.screen,
+                COLOR_GRID,
+                (ox, oy + r * self.cell_size),
+                (ox + self.board_px, oy + r * self.cell_size),
+                1,
+            )
+        for c in range(self.board_size + 1):
+            pygame.draw.line(
+                self.screen,
+                COLOR_GRID,
+                (ox + c * self.cell_size, oy),
+                (ox + c * self.cell_size, oy + self.board_px),
+                1,
+            )
 
-        # Area of effect for powers
-        if power_type and power_hover and not game.is_game_over():
-            self._draw_power_preview(game, power_type, power_hover, cell, margin)
+        # 3. Green apples
+        for gr, gc in env.green_apples:
+            rect = pygame.Rect(
+                ox + gc * self.cell_size + 4,
+                oy + gr * self.cell_size + 4,
+                self.cell_size - 8,
+                self.cell_size - 8,
+            )
+            pygame.draw.rect(self.screen, COLOR_GREEN_APPLE, rect, border_radius=6)
 
-        if suggestion and not game.is_game_over() and aide_on:
-            self._draw_suggestion(suggestion, cell)
+        # 4. Red apple
+        if env.red_apple:
+            rr, rc = env.red_apple
+            rect = pygame.Rect(
+                ox + rc * self.cell_size + 4,
+                oy + rr * self.cell_size + 4,
+                self.cell_size - 8,
+                self.cell_size - 8,
+            )
+            pygame.draw.rect(self.screen, COLOR_RED_APPLE, rect, border_radius=6)
 
-        self._draw_panel(game, ai_time, mode, aide_on, power_type)
-
-        # Win overlay rendered here (single flip, no flash)
-        if game.is_game_over():
-            self._draw_win_overlay(game)
-
-        # Aide popup on board corner to avoid covering panel status text
-        if self.aide_msg and pygame.time.get_ticks() < self.aide_timer:
-            self._draw_aide_on_board()
-
-        # Warning toast on board
-        if self.warning_msg and pygame.time.get_ticks() < self.warning_timer:
-            self._draw_warning_on_board()
-
-        # Guide popup
-        if self.guide_open and self.guide_msg:
-            self._draw_guide_overlay()
+        # 5. Snake body & head
+        for idx, (sr, sc) in enumerate(env.snake):
+            rect = pygame.Rect(
+                ox + sc * self.cell_size + 3,
+                oy + sr * self.cell_size + 3,
+                self.cell_size - 6,
+                self.cell_size - 6,
+            )
+            color = COLOR_SNAKE_HEAD if idx == 0 else COLOR_SNAKE_BODY
+            pygame.draw.rect(self.screen, color, rect, border_radius=5)
 
         pygame.display.flip()
 
-    # ──────────────────────────────────────────────
-    # Board elements
-    # ──────────────────────────────────────────────
-
-    def _draw_grid(self, cell, margin):
-        end_x = margin + (BOARD_SIZE - 1) * cell
-        end_y = margin + (BOARD_SIZE - 1) * cell
-        for i in range(BOARD_SIZE):
-            x = margin + i * cell
-            y = margin + i * cell
-            pygame.draw.line(self.screen, COLOR_LINE, (x, margin), (x, end_y), 1)
-            pygame.draw.line(self.screen, COLOR_LINE, (margin, y), (end_x, y), 1)
-
-    def _draw_star_points(self, cell, margin):
-        r = max(3, cell // 8)
-        for row, col in [(3, 3), (3, 9), (3, 15), (9, 3), (9, 9), (9, 15), (15, 3), (15, 9), (15, 15)]:
-            x = margin + col * cell
-            y = margin + row * cell
-            pygame.gfxdraw.filled_circle(self.screen, x, y, r, COLOR_LINE)
-
-    def _draw_stones(self, game, cell, margin):
-        board = game.board
-        last_move = game.last_move
-        stone_r = max(4, cell // 2 - 2)
-        hints_cache = game.render_hints  # Evaluate hints once per frame
-        for r in range(BOARD_SIZE):
-            for c in range(BOARD_SIZE):
-                if board[r][c] in (EMPTY, HOLE):
-                    continue
-                x = margin + c * cell
-                y = margin + r * cell
-
-                age_label = None
-                cracked = False
-                blip_indicator = False
-                hints = hints_cache.get((r, c), {})
-                if "cracked" in hints: cracked = True
-                if "age_label" in hints: age_label = hints["age_label"]
-                if "blip" in hints:
-                    blip_indicator = True
-
-                self._draw_stone(self.screen, x, y, stone_r, board[r][c] == BLACK,
-                                 age_label=age_label, cracked=cracked)
-
-                if blip_indicator:
-                    # Stronger highlight for blipping stones
-                    for r_offset in range(2, 8):
-                        color = (255, 255, 80, max(60, 180 - r_offset * 20))
-                        pygame.gfxdraw.aacircle(self.screen, x, y, stone_r + r_offset, color)
-                    # Pulsing outer ring
-                    pulse = int(30 * (1 + math.sin(pygame.time.get_ticks() / 200)))
-                    pygame.gfxdraw.aacircle(self.screen, x, y, stone_r + 8, (255, 255, 120, 80 + pulse))
-
-                if last_move and (r, c) == last_move:
-                    dot = (160, 50, 50) if board[r][c] == BLACK else (50, 80, 200)
-                    dr  = max(2, stone_r // 5)
-                    pygame.gfxdraw.filled_circle(self.screen, x, y, dr, dot)
-
-    def _draw_holes(self, game, cell, margin):
-        stone_r = max(4, cell // 2 - 2)
-        # Permanent holes: rendered directly with the 🕳️ emoji matching the guide
-        for r, c in game.holes:
-            x = margin + c * cell
-            y = margin + r * cell
-            if getattr(self, '_hole_surf', None):
-                self.screen.blit(self._hole_surf, self._hole_surf.get_rect(center=(x, y)))
-            else:
-                pygame.gfxdraw.filled_circle(self.screen, x, y, stone_r, (55, 38, 24))
-                pygame.gfxdraw.aacircle(self.screen, x, y, stone_r, (35, 24, 15))
-
-        # Hole Forecasts: same highlight style as blipping stones, but no stone in center.
-        hints_cache = game.render_hints
-        for r in range(BOARD_SIZE):
-            for c in range(BOARD_SIZE):
-                hints = hints_cache.get((r, c), {})
-                if "hole_forecast" in hints:
-                    rem = hints["hole_forecast"]
-                    x = margin + c * cell
-                    y = margin + r * cell
-
-                    for r_offset in range(2, 8):
-                        color = (255, 255, 80, max(60, 180 - r_offset * 20))
-                        pygame.gfxdraw.aacircle(self.screen, x, y, stone_r + r_offset, color)
-
-                    pulse = int(30 * (1 + math.sin(pygame.time.get_ticks() / 200)))
-                    pygame.gfxdraw.aacircle(self.screen, x, y, stone_r + 8, (255, 255, 120, 80 + pulse))
-
-                    # Keep center empty: draw only countdown text.
-                    fnt = self.font_small
-                    ts = fnt.render(str(rem), True, (180, 70, 10))
-                    self.screen.blit(ts, ts.get_rect(center=(x, y)))
-
-    def _draw_power_preview(self, game, power_type, pos, cell, margin):
-        row, col = pos
-        x, y = margin + col * cell, margin + row * cell
-        stone_r = max(4, cell // 2 - 2)
-
-        # Center target
-        pygame.gfxdraw.aacircle(self.screen, x, y, stone_r + 2, (100, 255, 100))
-
-        targets = []
-
-        if power_type == POWER_BOMB:
-            col_effect = (255, 50, 50, 100)
-            for dr in [-1, 0, 1]:
-                for dc in [-1, 0, 1]:
-                    if dr == 0 and dc == 0: continue
-                    r, c = row+dr, col+dc
-                    if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and (r, c) not in game.holes:
-                        targets.append((r, c))
-        elif power_type == POWER_CROSS:
-            col_effect = (50, 100, 255, 100)
-            for d in [-2, -1, 1, 2]:
-                for r, c in [(row+d, col), (row, col+d)]:
-                    if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and (r, c) not in game.holes:
-                        targets.append((r, c))
-        elif power_type == POWER_DIAGONAL:
-            col_effect = (200, 50, 255, 100)
-            for d in [-2, -1, 1, 2]:
-                for r, c in [(row+d, col+d), (row+d, col-d)]:
-                    if 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE and (r, c) not in game.holes:
-                        targets.append((r, c))
-
-        for r, c in targets:
-            tx = margin + c * cell
-            ty = margin + r * cell
-            s = pygame.Surface((stone_r*2, stone_r*2), pygame.SRCALPHA)
-            pygame.gfxdraw.filled_circle(s, stone_r, stone_r, stone_r - 1, col_effect)
-            self.screen.blit(s, (tx - stone_r, ty - stone_r))
-
-    def _draw_hover(self, pos, cell):
-        row, col = pos
-        x, y = self.grid_to_pixel(row, col)
-        sr = max(4, cell // 2 - 2)
-        s  = pygame.Surface((sr*2+4, sr*2+4), pygame.SRCALPHA)
-        pygame.gfxdraw.filled_circle(s, sr+2, sr+2, sr, (30, 30, 30, 80))
-        self.screen.blit(s, (x-sr-2, y-sr-2))
-
-    def _draw_suggestion(self, pos, cell):
-        row, col = pos
-        x, y = self.grid_to_pixel(row, col)
-        sr = max(4, cell // 2 - 2)
-        pygame.gfxdraw.aacircle(self.screen, x, y, sr, (255, 140, 0))
-        pygame.gfxdraw.aacircle(self.screen, x, y, sr - 1, (255, 140, 0))
-
-    # ──────────────────────────────────────────────
-    # Popups & Overlays
-    # ──────────────────────────────────────────────
-
-    def show_aide_popup(self, msg, duration_ms=2000):
-        self.aide_msg = msg
-        self.aide_timer = pygame.time.get_ticks() + duration_ms
-
-    def show_warning(self, msg, duration_ms=2500):
-        """Display an invalid move warning both on board and in panel."""
-        self.warning_msg = msg
-        self.warning_timer = pygame.time.get_ticks() + duration_ms
-
-    def show_guide(self, msg):
-        """Display a guide message. Closes when clicking outside the box."""
-        self.guide_msg = msg
-        self.guide_open = True
-
-    def close_guide(self):
-        """Close the guide overlay."""
-        self.guide_open = False
-        self.guide_msg = ""
-
-    def _draw_aide_on_board(self):
-        """Render a solid status block at the board's bottom-right corner."""
-        px = self._panel_x
-
-        # Colors based on message
-        if "UNO" in self.aide_msg:
-            bg_col = (140, 20, 20)  # Deep Red
-            txt_col = (255, 230, 180)  # Pale Gold / Cream
-        elif "Threat" in self.aide_msg or "威脅" in self.aide_msg:
-            bg_col = (255, 220, 80)  # Bright Yellow-Orange
-            txt_col = (120, 60, 0)   # Darker Orange text
-        else:
-            bg_col = (210, 180, 40)  # Muted Darker Yellow
-            txt_col = (40, 40, 40)   # Dark Grey
-
-        txt = self.font_small.render(self.aide_msg, True, txt_col)
-
-        bw = txt.get_width() + 16
-        bh = txt.get_height() + 12
-        # Keep this message in board area (left of side panel), near bottom-right.
-        bx = max(10, px - bw - 18)
-        by = self.win_h - bh - 18
-        rect = pygame.Rect(bx, by, bw, bh)
-
-        pygame.draw.rect(self.screen, bg_col, rect, border_radius=6)
-
-        txt = self.font_small.render(self.aide_msg, True, txt_col)
-        self.screen.blit(txt, txt.get_rect(center=rect.center))
-
-    def _draw_warning_on_board(self):
-        """Render a warning toast at the board's bottom-right corner."""
-        px = self._panel_x
-        txt_str = "⚠️ " + self.warning_msg
-        txt = self.font_small.render(txt_str, True, (255, 240, 225))
-
-        bw = txt.get_width() + 22
-        bh = txt.get_height() + 14
-        bx = max(10, px - bw - 18)
-        offset_y = 45 if (self.aide_msg and pygame.time.get_ticks() < self.aide_timer) else 0
-        by = self.win_h - bh - 18 - offset_y
-        rect = pygame.Rect(bx, by, bw, bh)
-
-        pygame.draw.rect(self.screen, (155, 25, 25), rect, border_radius=6)
-        pygame.draw.rect(self.screen, (255, 90, 90), rect, 2, border_radius=6)
-        self.screen.blit(txt, txt.get_rect(center=rect.center))
-
-    def _get_mixed_line_width(self, text):
-        """Measure width of a line that may mix regular text and emojis."""
-        if not text:
-            return 0
-        if not getattr(self, 'font_emoji_small', None):
-            return self.font_small.size(text)[0]
-        total_w = 0
-        for chunk, is_e in _split_text_and_emojis(text):
-            f = self.font_emoji_small if is_e else self.font_small
-            total_w += f.size(chunk)[0]
-        return total_w
-
-    def _draw_guide_overlay(self):
-        """Render an informative guide overlay in the center of the screen."""
-        # Create semi-transparent overlay
-        overlay = pygame.Surface((self.win_w, self.win_h), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 190))
-        self.screen.blit(overlay, (0, 0))
-
-        # Guide box width
-        box_w = min(740, self.win_w - 40)
-        max_text_w = box_w - 44
-
-        # Wrap text lines nicely to fit inside box
-        rendered_lines = []
-        for raw_line in self.guide_msg.split('\n'):
-            stripped = raw_line.rstrip()
-            if not stripped:
-                rendered_lines.append("")
-                continue
-            if self._get_mixed_line_width(stripped) <= max_text_w:
-                rendered_lines.append(stripped)
-            else:
-                words = stripped.split(' ')
-                curr = ""
-                for w in words:
-                    test_l = f"{curr} {w}".strip() if curr else w
-                    if self._get_mixed_line_width(test_l) <= max_text_w:
-                        curr = test_l
-                    else:
-                        if curr:
-                            rendered_lines.append(curr)
-                        curr = w
-                if curr:
-                    rendered_lines.append(curr)
-
-        # Dynamic box height calculation
-        line_h = self.font_small.get_linesize() + 4
-        needed_h = 58 + len(rendered_lines) * line_h + 38
-        box_h = min(max(280, needed_h), self.win_h - 30)
-        box_x = self.win_w // 2 - box_w // 2
-        box_y = self.win_h // 2 - box_h // 2
-        box_rect = pygame.Rect(box_x, box_y, box_w, box_h)
-
-        # Store rect for click detection
-        self._guide_overlay_rect = box_rect
-
-        # Draw panel background & glowing border
-        pygame.draw.rect(self.screen, (42, 32, 22), box_rect, border_radius=12)
-        pygame.draw.rect(self.screen, (210, 140, 50), box_rect, 2, border_radius=12)
-
-        # Title
-        title_surf = self.font_med.render(i18n.get("guide_title"), True, (230, 150, 60))
-        self.screen.blit(title_surf, (box_x + 22, box_y + 16))
-
-        # Guide text with dual-font mixed rendering
-        y_offset = box_y + 54
-        base_h = self.font_small.get_height()
-        for line in rendered_lines:
-            if line:
-                # Color highlights: headers & bullets warm gold, body soft warm white
-                if line.startswith('[') or line.startswith('•'):
-                    col = (255, 230, 160)
-                elif line.strip().startswith('-'):
-                    col = (235, 220, 200)
-                else:
-                    col = (215, 205, 185)
-
-                cur_x = box_x + 22
-                for chunk, is_e in _split_text_and_emojis(line):
-                    f = self.font_emoji_small if (is_e and getattr(self, 'font_emoji_small', None)) else self.font_small
-                    chunk_surf = f.render(chunk, True, col)
-                    # Vertically center-align emojis with the text line
-                    c_y = y_offset + (base_h - chunk_surf.get_height()) // 2
-                    self.screen.blit(chunk_surf, (cur_x, c_y))
-                    cur_x += chunk_surf.get_width()
-
-            y_offset += line_h
-
-        # Close hint at bottom
-        close_txt = i18n.get("guide_close")
-        close_surf = self.font_small.render(close_txt, True, (160, 140, 110))
-        self.screen.blit(close_surf, (box_x + box_w // 2 - close_surf.get_width() // 2, box_y + box_h - 25))
-
-    def _draw_win_overlay(self, game):
-        winner = game.winner
-        px = self._panel_x
-        overlay = pygame.Surface((px, self.win_h), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 140))
-        self.screen.blit(overlay, (0, 0))
-
-        t    = i18n.get
-        name = t("black") if winner == BLACK else t("white")
-        msg  = f"{name} {t('wins')}"
-        sub  = t("play_again")
-
-        txt  = self.font_title.render(msg, True, (255, 220, 50))
-        sub_s = self.font_med.render(sub, True, (210, 210, 210))
-        cx   = px // 2
-        cy   = self.win_h // 2
-        self.screen.blit(txt,  txt.get_rect(center=(cx, cy - 24)))
-        self.screen.blit(sub_s, sub_s.get_rect(center=(cx, cy + 24)))
-
-    # ──────────────────────────────────────────────
-    # Side panel
-    # ──────────────────────────────────────────────
-
-    def _draw_panel(self, game, ai_time, mode, aide_on, power_type):
-        px = self._panel_x
-        pw = self.win_w - px
-        pygame.draw.rect(self.screen, COLOR_PANEL_BG, (px - 10, 0, pw + 10, self.win_h))
-
-        t   = i18n.get
-        y   = 16
-        SEP = "-" * 19
-
-        def label(text, color=COLOR_TEXT, font=None):
-            nonlocal y
-            f  = font or self.font_med
-            s  = f.render(text, True, color)
-            self.screen.blit(s, (px + 8, y))
-            y += s.get_height() + 7
-
-        label(t("title"), COLOR_ACCENT, self.font_title)
-        label(SEP, COLOR_ACCENT)
-
-        label(f'{t("mode")}: {t("mode_" + game.rules.name)}')
-
-        label(SEP, COLOR_ACCENT)
-        label(t("captured"))
-        label(f'  {t("black")}: {game.captures.get(BLACK, 0) * 2} {t("pieces")}')
-        label(f'  {t("white")}: {game.captures.get(WHITE, 0) * 2} {t("pieces")}')
-
-        if game.rules.power_stones:
-            label(SEP, COLOR_ACCENT)
-            p_black = game.individual_captures.get(BLACK, 0)
-            p_white = game.individual_captures.get(WHITE, 0)
-            p_curr = game.individual_captures.get(game.current_player, 0)
-            # Show both players' power status in PvP
-            if mode == "human":
-                label(f'{t("power")} ({t("black")}): {p_black} / 5', (150, 150, 150))
-                label(f'{t("power")} ({t("white")}): {p_white} / 5', (180, 180, 255))
-                if p_curr >= 5:
-                    curr_name = t("black") if game.current_player == BLACK else t("white")
-                    txt_col = (255, 255, 50) if (pygame.time.get_ticks()//200) % 2 == 0 else (200, 150, 20)
-                    label(t("power_ready") + f' ({curr_name})', txt_col, self.font_title)
-                    if power_type:
-                        label(f'★ {t("power_" + power_type)}', (100, 255, 100), self.font_small)
-                        label(t("cycle_hint"), (200, 220, 150), self.font_small)
-                    else:
-                        label(t("activate_right_click"), (200, 200, 200), self.font_small)
-            else:
-                if p_black >= 5:
-                    txt_col = (255, 255, 50) if (pygame.time.get_ticks()//200) % 2 == 0 else (200, 150, 20)
-                    label(t("power_ready"), txt_col, self.font_title)
-                    if power_type:
-                        label(f'★ {t("power_" + power_type)}', (100, 255, 100), self.font_small)
-                        label(t("cycle_hint"), (200, 220, 150), self.font_small)
-                    else:
-                        label(t("activate_right_click"), (200, 200, 200), self.font_small)
-                else:
-                    label(f'{t("power")}: {p_black} / 5', (150, 150, 150))
-
-        label(SEP, COLOR_ACCENT)
-        if game.is_game_over():
-            name = t("black") if game.winner == BLACK else t("white")
-            label(f'{name} {t("wins")}', (255, 220, 60), self.font_title)
-        else:
-            name = t("black") if game.current_player == BLACK else t("white")
-            label(f'{t("turn")} {name}')
-
-        label(SEP, COLOR_ACCENT)
-        label(t("ai_time"), COLOR_ACCENT)
-        tc = (255, 80, 80) if ai_time > 0.4 else COLOR_TEXT
-        label(f"  {ai_time:.3f}s", tc, self.font_title)
-
-        if self.warning_msg and pygame.time.get_ticks() < self.warning_timer:
-            label(SEP, (240, 80, 80))
-            warn_surf = self.font_small.render("⚠️ " + self.warning_msg, True, (255, 235, 220))
-            bw = pw - 16
-            bh = warn_surf.get_height() + 10
-            warn_rect = pygame.Rect(px + 8, y, bw, bh)
-            pygame.draw.rect(self.screen, (140, 25, 25), warn_rect, border_radius=6)
-            pygame.draw.rect(self.screen, (240, 80, 80), warn_rect, 1, border_radius=6)
-            self.screen.blit(warn_surf, warn_surf.get_rect(center=warn_rect.center))
-            y += bh + 8
-        elif self.status_msg:
-            label(SEP, COLOR_ACCENT)
-            label(self.status_msg, font=self.font_small)
-
-        # ---- Controls layout: Guide (top-left), Aide (bottom-left), Menu (right) ----
-        panel_pad = 8
-        gap = 6
-        btn_h = max(30, min(40, int(self.win_h * 0.05)))
-        controls_bottom = self.win_h - 60
-        top_y = controls_bottom - (2 * btn_h + gap)
-
-        full_w = pw - 2 * panel_pad
-        half_w = (full_w - gap) // 2
-        left_x = px + panel_pad
-        right_x = left_x + half_w + gap
-
-        # Guide Button (top-left)
-        self._guide_rect = pygame.Rect(left_x, top_y, half_w, btn_h)
-        g_hovered = self._guide_rect.collidepoint(pygame.mouse.get_pos())
-        g_bg = (60, 80, 100) if g_hovered else (40, 55, 75)
-        g_bdr = (150, 180, 220) if g_hovered else (100, 130, 160)
-        pygame.draw.rect(self.screen, g_bg, self._guide_rect, border_radius=6)
-        pygame.draw.rect(self.screen, g_bdr, self._guide_rect, 1, border_radius=6)
-        gt = self.font_small.render(t("guide"), True, (230, 215, 185))
-        # Handle Text Overflow
-        if gt.get_width() > self._guide_rect.width - 10:
-            gt_w = self._guide_rect.width - 10
-            gt = pygame.transform.smoothscale(gt, (gt_w, gt.get_height() * gt_w // gt.get_width()))
-        self.screen.blit(gt, gt.get_rect(center=self._guide_rect.center))
-
-        # Aide Button (bottom-left)
-        self._aide_rect = pygame.Rect(left_x, top_y + btn_h + gap, half_w, btn_h)
-        a_hovered = self._aide_rect.collidepoint(pygame.mouse.get_pos())
-        a_bg = (60, 100, 60) if aide_on else ((80, 50, 50) if a_hovered else (50, 30, 30))
-        a_bdr = (100, 150, 100) if aide_on else (120, 60, 60)
-        pygame.draw.rect(self.screen, a_bg, self._aide_rect, border_radius=6)
-        pygame.draw.rect(self.screen, a_bdr, self._aide_rect, 1, border_radius=6)
-        atxt = t("aide_on") if aide_on else t("aide_off")
-        asurf = self.font_small.render(atxt, True, (240, 240, 240))
-        # Handle Text Overflow
-        if asurf.get_width() > self._aide_rect.width - 10:
-            a_w = self._aide_rect.width - 10
-            asurf = pygame.transform.smoothscale(asurf, (a_w, asurf.get_height() * a_w // asurf.get_width()))
-        self.screen.blit(asurf, asurf.get_rect(center=self._aide_rect.center))
-
-        # Menu Button (right, spans two rows)
-        menu_h = 2 * btn_h + gap
-        self._menu_rect = pygame.Rect(right_x, top_y, full_w - half_w - gap, menu_h)
-        m_hovered = self._menu_rect.collidepoint(pygame.mouse.get_pos())
-        m_bg = (110, 70, 25) if m_hovered else (70, 50, 20)
-        m_bdr = (200, 140, 50) if m_hovered else (130, 95, 40)
-        pygame.draw.rect(self.screen, m_bg, self._menu_rect, border_radius=6)
-        pygame.draw.rect(self.screen, m_bdr, self._menu_rect, 1, border_radius=6)
-        mt = self.font_med.render(t("menu"), True, (230, 215, 185))
-        # Handle Text Overflow
-        if mt.get_width() > self._menu_rect.width - 10:
-            m_w = self._menu_rect.width - 10
-            mt = pygame.transform.smoothscale(mt, (m_w, mt.get_height() * m_w // mt.get_width()))
-        self.screen.blit(mt, mt.get_rect(center=self._menu_rect.center))
-
-        # ---- Responsive hints: N (New Game), R (Undo) ----
-        hints = [t("restart"), t("undo")]
-        h_surfs = [self._render_hint_item(txt) for txt in hints]
-        s0, s1 = h_surfs[0], h_surfs[1]
-
-        available_w = pw - 2 * panel_pad
-        total_w = s0.get_width() + s1.get_width()
-
-        # Subtle divider above hints area
-        pygame.draw.line(self.screen, (60, 45, 28), (px + panel_pad, self.win_h - 45), (px + pw - panel_pad, self.win_h - 45))
-
-        hint_y = self.win_h - 22
-        if total_w + 10 <= available_w:
-            # Single horizontal row: Left ([N] New Game), Right ([R] Undo)
-            self.screen.blit(s0, s0.get_rect(midleft=(px + panel_pad, hint_y)))
-            self.screen.blit(s1, s1.get_rect(midright=(px + pw - panel_pad, hint_y)))
-        else:
-            # Fallback scaling / stacking if window width is extremely narrow
-            y1 = self.win_h - 32
-            y2 = self.win_h - 14
-            if s0.get_width() > available_w:
-                w0 = available_w
-                s0 = pygame.transform.smoothscale(s0, (w0, max(1, s0.get_height() * w0 // s0.get_width())))
-            if s1.get_width() > available_w:
-                w1 = available_w
-                s1 = pygame.transform.smoothscale(s1, (w1, max(1, s1.get_height() * w1 // s1.get_width())))
-            self.screen.blit(s0, s0.get_rect(center=(px + pw // 2, y1)))
-            self.screen.blit(s1, s1.get_rect(center=(px + pw // 2, y2)))
-
-    def _render_hint_item(self, text):
-        """
-        Render a keyboard shortcut hint item.
-        The hotkey bracket part (e.g. '[N]') is highlighted in COLOR_ACCENT (gold),
-        while the action description is rendered in COLOR_TEXT (cream).
-        """
-        if text.startswith("[") and "] " in text:
-            k_part, d_part = text.split("] ", 1)
-            k_surf = self.font_small.render(k_part + "]", True, COLOR_ACCENT)
-            d_surf = self.font_small.render(" " + d_part, True, COLOR_TEXT)
-            sw = k_surf.get_width() + d_surf.get_width()
-            sh = max(k_surf.get_height(), d_surf.get_height())
-            surf = pygame.Surface((sw, sh), pygame.SRCALPHA)
-            surf.blit(k_surf, (0, (sh - k_surf.get_height()) // 2))
-            surf.blit(d_surf, (k_surf.get_width(), (sh - d_surf.get_height()) // 2))
-            return surf
-        return self.font_small.render(text, True, COLOR_TEXT)
-
-    def _draw_lang_buttons(self, px, pw):
-        """
-        Draw language switcher buttons using ASCII short-names (EN/FR/ZH).
-        Positioned at the top right of the application window.
-        """
-        langs   = i18n.LANGS
-        labels  = i18n.LANG_LABELS
-        n       = len(langs)
-        btn_w   = max(45, min(90, (pw - 14 - (n - 1) * 5) // n))
-        btn_h   = 30
-        gap     = 5
-        total   = n * btn_w + (n - 1) * gap
-        # Top right positioning
-        start_x = self.win_w - total - 20
-        y       = 10
-
-        for i, lang in enumerate(langs):
-            rx   = start_x + i * (btn_w + gap)
-            rect = pygame.Rect(rx, y, btn_w, btn_h)
-            self._lang_rects[lang] = rect   # update every frame
-
-            active  = (lang == i18n.current())
-            hovered = rect.collidepoint(pygame.mouse.get_pos())
-            bg     = COLOR_ACCENT if active else ((85, 62, 25) if hovered else (52, 38, 16))
-            border = (255, 200, 80) if active else (120, 88, 38)
-            pygame.draw.rect(self.screen, bg, rect, border_radius=5)
-            pygame.draw.rect(self.screen, bg, rect, border_radius=6)
-            pygame.draw.rect(self.screen, border, rect, 1, border_radius=6)
-
-            # Draw Flag to match the logic in main.py
-            fx, fy = rect.x + 8, rect.centery - 8
-            if lang == "EN":
-                pygame.draw.rect(self.screen, (200, 50, 50), (fx, fy, 22, 16))
-                pygame.draw.rect(self.screen, (255, 255, 255), (fx, fy+2, 22, 3))
-                pygame.draw.rect(self.screen, (255, 255, 255), (fx, fy+7, 22, 3))
-                pygame.draw.rect(self.screen, (255, 255, 255), (fx, fy+12, 22, 3))
-                pygame.draw.rect(self.screen, (50, 50, 150), (fx, fy, 11, 8))
-            elif lang == "FR":
-                pygame.draw.rect(self.screen, (40, 80, 180), (fx, fy, 7, 16))
-                pygame.draw.rect(self.screen, (255, 255, 255), (fx+7, fy, 8, 16))
-                pygame.draw.rect(self.screen, (220, 40, 50), (fx+15, fy, 7, 16))
-            elif lang == "ZH":
-                pygame.draw.rect(self.screen, (220, 30, 30), (fx, fy, 22, 16))
-                pygame.draw.rect(self.screen, (30, 40, 160), (fx, fy, 11, 8))
-                pygame.draw.circle(self.screen, (255, 255, 255), (fx+5, fy+4), 3)
-
-            lsurf = self.font_small.render(labels.get(lang, lang), True, (230, 220, 200))
-            self.screen.blit(lsurf, lsurf.get_rect(midleft=(fx + 28, rect.centery)))
-
-    # ──────────────────────────────────────────────
-    # Input helpers
-    # ──────────────────────────────────────────────
-
-    def update_hover(self, pos):
-        self.hover_pos = self.pixel_to_grid(*pos)
-
-    def handle_click(self, pos):
-        return self.pixel_to_grid(*pos)
-
-    def check_lang_click(self, pos):
-        """Return language string if a language button was clicked, else None."""
-        for lang, rect in self._lang_rects.items():
-            if rect.collidepoint(pos):
-                return lang
-        return None
-
-    def check_menu_click(self, pos):
-        """Return True if the menu button area was clicked."""
-        return self._menu_rect is not None and self._menu_rect.collidepoint(pos)
-
-    def check_aide_click(self, pos):
-        """Return True if the aide button area was clicked."""
-        return self._aide_rect is not None and self._aide_rect.collidepoint(pos)
-
-    def check_guide_click(self, pos):
-        """Return True if the guide button area was clicked."""
-        return self._guide_rect is not None and self._guide_rect.collidepoint(pos)
-
-    def set_status(self, msg):
-        self.status_msg = msg
-
-    def tick(self, fps=60):
-        self.clock.tick(fps)
+        if not step_by_step and self.clock:
+            self.clock.tick(fps)
+
+    def tick(self, fps: int) -> None:
+        """Advance pygame clock."""
+        if self.available and self.clock:
+            self.clock.tick(fps)
+
+    def quit(self) -> None:
+        """Safely terminate pygame instance."""
+        if self.available:
+            import pygame
+
+            pygame.quit()
+            self.available = False

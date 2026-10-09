@@ -1,15 +1,30 @@
-# GUI constants
-WINDOW_WIDTH  = 900
-WINDOW_HEIGHT = 720
-BOARD_MARGIN  = 40       # Pixels from window edge to first line
-CELL_SIZE     = 34       # Pixels between grid lines
+"""UI configuration constants"""
+
+# Pygame keycode mapping for manual control
+try:
+    import pygame
+    KEY_TO_DIR = {
+        pygame.K_UP: "UP",
+        pygame.K_w: "UP",       # 順便支援 WASD
+        pygame.K_LEFT: "LEFT",
+        pygame.K_a: "LEFT",
+        pygame.K_DOWN: "DOWN",
+        pygame.K_s: "DOWN",
+        pygame.K_RIGHT: "RIGHT",
+        pygame.K_d: "RIGHT",
+    }
+except ImportError:
+    KEY_TO_DIR = {}
+
+# Window dimensions
+CELL_SIZE = 48
+HEADER_HEIGHT = 60
 
 # Colors (R, G, B)
-COLOR_BG         = (220, 179, 92)    # Wood-tone board background
-COLOR_LINE       = (80, 50, 20)      # Grid lines
-COLOR_BLACK_STONE = (20, 20, 20)
-COLOR_WHITE_STONE = (240, 240, 240)
-COLOR_HIGHLIGHT  = (255, 80, 80, 160)  # Hover / suggestion indicator
-COLOR_PANEL_BG   = (40, 30, 20)
-COLOR_TEXT       = (230, 220, 200)
-COLOR_ACCENT     = (200, 130, 50)
+COLOR_BG = (30, 30, 34)
+COLOR_GRID = (50, 50, 55)
+COLOR_SNAKE_HEAD = (0, 160, 255)
+COLOR_SNAKE_BODY = (30, 120, 220)
+COLOR_GREEN_APPLE = (40, 200, 80)
+COLOR_RED_APPLE = (230, 45, 45)
+COLOR_TEXT = (240, 240, 240)

@@ -1,19 +1,25 @@
-# Board
-BOARD_SIZE = 19          # 19x19 Go board
-EMPTY = 0
-BLACK = 1                # Human player (default) or AI
-WHITE = 2                # AI (default) or second human
-HOLE = 3                 # Star mode hole
-DIRECTIONS = ((0, 1), (1, 0), (1, 1), (1, -1)) # →, ↓, ↘, ↙
+"""Game configuration and constants"""
 
-# Win conditions
-WIN_LENGTH = 5           # Five or more in a row to win
-MAX_CAPTURES = 5         # 5 captured pairs (10 stones) = win
+# Board configuration
+BOARD_SIZE = 10
 
-# Game Modes
-MODE_STANDARD = "Standard"
-MODE_DECAY    = "Decay"
-MODE_POWER    = "Power"
-MODE_STAR     = "Star"
-MODE_LIMITLESS = "Standard Unlimited"
-MODE_EVERYTHING = "Everything"
+# Directions / Actions (Single Source of Truth)
+DIRECTIONS = {
+    "UP": (-1, 0),
+    "LEFT": (0, -1),
+    "DOWN": (1, 0),
+    "RIGHT": (0, 1),
+}
+
+# Object / Vision characters (42 Subject Specification)
+CHAR_WALL = "W"
+CHAR_HEAD = "H"
+CHAR_BODY = "S"
+CHAR_GREEN = "G"
+CHAR_RED = "R"
+CHAR_EMPTY = "0"
+
+# Initial environment parameters
+INITIAL_SNAKE_LENGTH = 3
+INITIAL_GREEN_APPLES = 2
+INITIAL_RED_APPLES = 1

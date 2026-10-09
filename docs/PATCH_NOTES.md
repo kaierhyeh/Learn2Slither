@@ -8,12 +8,30 @@
 
 | 版本標籤 | 發布日期 | 核心主題 | 關鍵成果與亮點 |
 |---|---|---|---|
+| **v0.2.0** | 2026-10-09 | **代碼庫重構、清理與 UI 統一 (Refactoring & UI Standardization)** | 刪除 39MB 舊字型與五子棋殘留模組、整併狀態管理、全面將 GUI 統一為 UI、通過 `make norm` (flake8 0 warnings)、重寫 `README.md`、`TODO.md` 與 `walkthrough.md`。 |
 | **v0.1.0** | 2026-10-05 | **專案工程基礎設施與規範奠基 (Foundation & Toolchain)** | 深度解析 42 Subject 規範手冊、建立 `TODO.md` 六階段藍圖、全面重寫 `README.md`、完成標準 `./snake` 包裝腳本、實現共用平滑動態進度條（`DRAW_BAR`）、整合 `flake8` 與 42 規範。 |
-| *(Heritage)* **v1.3.3** | 2026-09-17 | *5eyes 介面易讀性優化與文檔校準* | （5eyes 繼承架構）英／法雙行提示排版、雙色按鍵高亮、視窗標題統一、測試 20/20 通過。 |
 
 ---
 
 ## 歷次版本詳細變更記錄 (Detailed Changelog)
+
+### v0.2.0 (2026-10-09) - 代碼庫重構、清理與 UI 統一 (Refactoring & UI Standardization)
+
+#### 1. 徹底清理五子棋遺留模組與字型資源
+- **刪除 `assets/fonts/`（~39MB）**：移除 `NotoSansTC-Regular.otf` 與 `NotoEmoji-Regular.ttf`，42 Subject 僅需標準 ASCII 終端輸出與 Pygame 內建等寬字體，無需笨重的 CJK 字型包袱。
+- **清理舊模組**：刪除舊五子棋專屬的 `src/core/game.py`、`src/ai/ai.py` (Minimax)、`src/ai/heuristic.py`、`src/ui/i18n.py`。
+- **整併狀態管理**：刪除冗餘的 `src/core/state.py`，將所有狀態追蹤、射線視野特徵提取與終端十字渲染整併至 `src/core/environment.py` 與 `src/core/snake.py`。
+
+#### 2. GUI 全面統一為 UI (Naming & Design Consistency)
+- 將 `src/ui/gui.py` 中的核心類別重構為 `class UI:`。
+- `src/ui/__init__.py` 導出 `from ui.gui import UI`。
+- 更新 `src/main.py` 與 `src/config/ui.py`，保持全專案 `UI` 命名一致。
+
+#### 3. 代碼規範檢查與文檔同步升級
+- 全專案通過 `make norm`（`flake8 --max-line-length=100`），達成 0 錯誤、0 警告。
+- 全面改寫並重構 [`README.md`](file:///home/kyeh/Desktop/snake/README.md)、[`docs/TODO.md`](file:///home/kyeh/Desktop/snake/docs/TODO.md) 與 [`docs/walkthrough.md`](file:///home/kyeh/Desktop/snake/docs/walkthrough.md)，完全轉向 Learn2Slither 規格與答辯指引。
+
+---
 
 ### v0.1.0 (2026-10-05) - 專案工程基礎設施與規範奠基 (Foundation & Toolchain)
 
@@ -50,26 +68,3 @@
   - 支援 `make norm` / `make lint` 執行 `flake8` 程式碼規範審查。
   - 支援 `make test` 執行單元測試套件。
   - 支援 `make help` 輸出完整命令列說明手冊。
-
----
-
-### *(Heritage from 5eyes)* v1.3.3 (2026-09-17) - 介面易讀性優化、指南校準與標題統一
-
-#### 1. 右下角快捷鍵提示詞雙行自適應排版
-- 中文維持單行 3 欄並列，英／法文自動啟用雙行居中與邊角對齊，徹底消除文字下半部超出螢幕底緣被截切問題。
-- 引入 `pygame.transform.smoothscale` 進行視窗窄邊界縮放保護。
-
-#### 2. 按鍵雙色層次高亮 (Key Highlight)
-- 括弧快捷鍵部分採用金色 `COLOR_ACCENT` 高亮，功能文字保持柔和米白，提升易讀性。
-
-#### 3. 流星模式指南說明精確化
-- 更正不精確描述：星石每 3 回合自變黑白顏色（不影響周圍棋子），同步校正三國語言。
-
-#### 4. 視窗標題列規範化
-- 統一為 `set_caption("Gomoku")`，避免動態標題與面板資訊冗餘脫節。
-
----
-
-### *(Heritage from 5eyes)* v1.3.2 (2026-09-17) - AI 戰術評估權重倒掛修復與安全剪枝
-- 修復連五分數倒掛破綻，建立己方成五（10,000,000+）> 防守成五（5,000,000）的分級體系，移除 `1.05` 係數。
-- 修正 Minimax 單步剪枝，保留所有防守連五候選步。

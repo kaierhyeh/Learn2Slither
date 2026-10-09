@@ -1,14 +1,12 @@
-AI_TIME_LIMIT    = 0.45   # Maximum seconds per move (hard cap)
-MAX_DEPTH        = 10     # Minimum search depth required by Subject
-NEIGHBOR_RADIUS  = 2      # Only consider empty cells within this radius of existing stones
+"""AI and Q-learning configuration hyperparameters."""
 
-# Heuristic pattern scores
-SCORE = {
-    "FIVE":         1_000_000,
-    "OPEN_FOUR":      100_000,
-    "CLOSED_FOUR":     10_000,
-    "OPEN_THREE":       5_000,
-    "CLOSED_THREE":       500,
-    "OPEN_TWO":           100,
-    "CLOSED_TWO":          10,
-}
+# Learning hyperparameters
+DEFAULT_ALPHA = 0.2     # Learning rate (step size)
+DEFAULT_GAMMA = 0.9     # Discount factor for future rewards
+DEFAULT_EPSILON = 0.2   # Exploration probability (epsilon-greedy)
+
+# Reward definitions
+REWARD_GREEN_APPLE = 10.0
+REWARD_RED_APPLE = -10.0
+REWARD_STEP = -0.1
+REWARD_COLLISION = -50.0
