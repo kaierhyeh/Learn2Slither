@@ -3,6 +3,12 @@
 import random
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from config.ai import (
+    REWARD_COLLISION,
+    REWARD_GREEN_APPLE,
+    REWARD_RED_APPLE,
+    REWARD_STEP,
+)
 from config.game import (
     BOARD_SIZE,
     CHAR_BODY,
@@ -135,7 +141,7 @@ class Environment:
         return "\n".join(lines)
 
     def get_state(self) -> Tuple[Any, ...]:
-        """Extract compact state feature tuple from 4 visible rays."""
+        """Extract compact 20-element state tuple from 4 visible rays."""
         if len(self.snake_model) == 0:
             return ()
 
@@ -144,25 +150,10 @@ class Environment:
         green_set = set(self.green_apples)
 
         features = []
-        for action, (dr, dc) in DIRECTIONS.items():
-
-            # 1. Immediate danger at distance 1
-            adj_r, adj_c = head_r + dr, head_c + dc
-            danger = 0
-            if not (
-                0 <= adj_r < self.board_size and
-                0 <= adj_c < self.board_size
-            ):
-                danger = 1
-            elif (adj_r, adj_c) in body_set:
-                danger = 1
-
-            # 2. Ray scan to locate first visible object and apple presence
-            first_item = CHAR_WALL
-            first_dist = 0
-            saw_green = 0
-            saw_red = 0
+        for _, (dr, dc) in DIRECTIONS.items():
             step = 1
+            first_obj = CHAR_WALL
+            first_dist = 1
 
             while True:
                 curr_r, curr_c = head_r + dr * step, head_c + dc * step
@@ -170,34 +161,57 @@ class Environment:
                     0 <= curr_r < self.board_size and
                     0 <= curr_c < self.board_size
                 ):
-                    if first_dist == 0:
-                        first_item = CHAR_WALL
-                        first_dist = step
+                    first_obj = CHAR_WALL
+                    first_dist = step
                     break
 
                 pos = (curr_r, curr_c)
                 if pos in body_set:
-                    if first_dist == 0:
-                        first_item = CHAR_BODY
-                        first_dist = step
-                elif pos in green_set:
-                    saw_green = 1
-                    if first_dist == 0:
-                        first_item = CHAR_GREEN
-                        first_dist = step
+                    first_obj = CHAR_BODY
+                    first_dist = step
+                    break
                 elif pos == self.red_apple:
-                    saw_red = 1
-                    if first_dist == 0:
-                        first_item = CHAR_RED
-                        first_dist = step
+                    first_obj = CHAR_RED
+                    first_dist = step
+                    break
+                elif pos in green_set:
+                    first_obj = CHAR_GREEN
+                    first_dist = step
+                    break
 
                 step += 1
 
-            dist_bucket = min(first_dist, 3)
+            danger = (
+                1
+                if first_dist == 1 and first_obj in (CHAR_WALL, CHAR_BODY)
+                else 0
+            )
+            if first_dist == 1:
+                distance_bin = 0
+            elif first_dist <= 4:
+                distance_bin = 1
+            else:
+                distance_bin = 2
+
+            saw_green = 1 if first_obj == CHAR_GREEN else 0
+            saw_red = (
+                1 if (first_dist == 1 and first_obj == CHAR_RED) else 0
+            )
+
+            if danger == 1:
+                first_item = CHAR_WALL
+            elif saw_red == 1:
+                first_item = CHAR_RED
+            elif saw_green == 1:
+                first_item = CHAR_GREEN
+                distance_bin = 0
+            else:
+                first_item = CHAR_EMPTY
+
             features.extend([
                 danger,
                 first_item,
-                dist_bucket,
+                distance_bin,
                 saw_green,
                 saw_red,
             ])
@@ -217,15 +231,25 @@ class Environment:
         if self.snake_model.is_wall_collision(new_head):
             self.game_over = True
             self.game_over_reason = "wall"
-            return self.get_state(), -50.0, True, {"reason": "wall"}
+            return (
+                self.get_state(),
+                REWARD_COLLISION,
+                True,
+                {"reason": "wall"},
+            )
 
         # 2. Self collision
         if self.snake_model.is_self_collision(new_head):
             self.game_over = True
             self.game_over_reason = "self"
-            return self.get_state(), -50.0, True, {"reason": "self"}
+            return (
+                self.get_state(),
+                REWARD_COLLISION,
+                True,
+                {"reason": "self"},
+            )
 
-        reward = -0.1
+        reward = REWARD_STEP
 
         # 3. Eating green apple
         if new_head in self.green_apples:
@@ -235,18 +259,23 @@ class Environment:
             if self.red_apple:
                 occupied.add(self.red_apple)
             self.green_apples.append(self._spawn_apple(occupied))
-            reward = 10.0
+            reward = REWARD_GREEN_APPLE
         # 4. Eating red apple
         elif new_head == self.red_apple:
             self.snake_model.shrink(new_head)
             if len(self.snake_model) == 0:
                 self.game_over = True
                 self.game_over_reason = "zero_length"
-                return self.get_state(), -50.0, True, {"reason": "zero_length"}
+                return (
+                    self.get_state(),
+                    REWARD_COLLISION,
+                    True,
+                    {"reason": "zero_length"},
+                )
 
             occupied = set(self.snake_model.body_list) | set(self.green_apples)
             self.red_apple = self._spawn_apple(occupied)
-            reward = -10.0
+            reward = REWARD_RED_APPLE
         # 5. Normal movement
         else:
             self.snake_model.move(new_head)

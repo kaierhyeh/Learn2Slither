@@ -40,6 +40,12 @@ class QTableAgent:
 
         q_dict = self.get_q_values(state)
         max_q = max(q_dict.values())
+        if self.dontlearn and max_q < 2.0 and random.random() < 0.15:
+            safe_actions = [
+                act for act, val in q_dict.items() if val > -2.0
+            ]
+            if safe_actions:
+                return random.choice(safe_actions)
         # Break ties randomly to avoid directional bias
         best_actions = [act for act, val in q_dict.items() if val == max_q]
         return random.choice(best_actions)
@@ -58,7 +64,7 @@ class QTableAgent:
 
         key = str(state)
         curr_q = self.get_q_values(state)[action]
-        if done:
+        if done:  # 死亡時沒有未來，target = r
             target = reward
         else:
             next_q_vals = self.get_q_values(next_state).values()

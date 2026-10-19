@@ -29,7 +29,7 @@
 
 #### 3. 代碼規範檢查與文檔同步升級
 - 全專案通過 `make norm`（`flake8 --max-line-length=100`），達成 0 錯誤、0 警告。
-- 全面改寫並重構 [`README.md`](file:///home/kyeh/Desktop/snake/README.md)、[`docs/TODO.md`](file:///home/kyeh/Desktop/snake/docs/TODO.md) 與 [`docs/walkthrough.md`](file:///home/kyeh/Desktop/snake/docs/walkthrough.md)，完全轉向 Learn2Slither 規格與答辯指引。
+- 全面改寫並重構 [`README.md`]、[`docs/TODO.md`] 與 [`docs/walkthrough.md`]，完全轉向 Learn2Slither 規格與答辯指引。
 
 ---
 
@@ -45,11 +45,11 @@
   - 明確確認貪食蛇規則（撞牆、撞身、吃紅蘋果長度縮為 0）輕量且屬於環境狀態轉移的一環，無須過度設計獨立的 `rules.py`。
 
 #### 2. 規劃文件與專案規範確立
-- **建立實作藍圖 [`docs/TODO.md`](file:///home/kyeh/Learn2Slither/docs/TODO.md)**：
+- **建立實作藍圖 [`docs/TODO.md`]**：
   - 整理完整的規格要求、三大禁區警示、模組化架構藍圖。
   - 列出 5eyes 檔案去留與重構清單（標記刪除五子棋專用檔案、保留修改核心設定與 UI、新增 Interpreter 與 Q-learning 模組）。
   - 規劃 Phase 1 至 Phase 6 的循序開發與驗收 Checklist。
-- **全面改寫 [`README.md`](file:///home/kyeh/Learn2Slither/README.md)**：
+- **全面改寫 [`README.md`]**：
   - 提供專業的中英雙語專案說明文檔。
   - 包含 Q-learning 數學公式、四向十字視野說明、模組架構圖。
   - 詳述評審專用的命令行範例（`-sessions`, `-save`, `-load`, `-visual`, `-dontlearn`, `-step-by-step`）。
@@ -64,7 +64,7 @@
   - 提供 20% ➔ 40% ➔ 60% ➔ 80% ➔ 100% 的原地（In-place `\033[2K\r`）流暢動畫回饋。
   - 全面套用於 `all`, `install`, `$(NAME)`, `clean`, `fclean`。
 - **依賴與規範管理**：
-  - 新增 [`requirements.txt`](file:///home/kyeh/Learn2Slither/requirements.txt)（包含 `pygame` 與 `flake8`）。
+  - 新增 [`requirements.txt`]（包含 `pygame` 與 `flake8`）。
   - 支援 `make norm` / `make lint` 執行 `flake8` 程式碼規範審查。
   - 支援 `make test` 執行單元測試套件。
   - 支援 `make help` 輸出完整命令列說明手冊。

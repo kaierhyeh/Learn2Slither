@@ -1,9 +1,9 @@
 """AI and Q-learning configuration hyperparameters."""
 
 # Learning hyperparameters
-DEFAULT_ALPHA = 0.2     # Learning rate (step size)
-DEFAULT_GAMMA = 0.9     # Discount factor for future rewards
-DEFAULT_EPSILON = 0.2   # Exploration probability (epsilon-greedy)
+DEFAULT_ALPHA = 0.1     # Learning rate (step size)
+DEFAULT_GAMMA = 0.5     # Discount factor for future rewards
+DEFAULT_EPSILON = 0.1   # Exploration probability (epsilon-greedy)
 
 # Reward definitions
 REWARD_GREEN_APPLE = 10.0

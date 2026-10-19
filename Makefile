@@ -3,8 +3,8 @@ NAME     = snake
 SRCDIR   = src
 TESTDIR  = tests
 MAIN     = $(SRCDIR)/main.py
-PYTHON   = python3
-PIP      = pip3
+PYTHON   = $(shell [ -x venv/bin/python3 ] && echo venv/bin/python3 || echo python3)
+PIP      = $(shell [ -x venv/bin/pip3 ] && echo venv/bin/pip3 || echo pip3)
 
 # ========================================================
 # Colors and Formatting

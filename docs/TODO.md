@@ -1,6 +1,6 @@
 # Learn2Slither 實作與重構任務清單 (TODO)
 
-本文件依據 42 官方規範手冊 [`docs/en.subject.pdf`](file:///home/kyeh/Desktop/snake/docs/en.subject.pdf) 與 5eyes 成功架構經驗，詳細規劃 Learn2Slither 專案之重構、移植、實作步驟與驗收標準。
+本文件依據 42 官方規範手冊 [`docs/en.subject.pdf`] 與 5eyes 成功架構經驗，詳細規劃 Learn2Slither 專案之重構、移植、實作步驟與驗收標準。
 
 ---
 
@@ -151,14 +151,6 @@ Learn2Slither/
 - [x] **`src/ui/gui.py`** (`UI`)：
   - 10x10 網格渲染、抬頭 HUD 資訊、按鍵事件監聽（ESC, Space, WASD/方向鍵, 調速）。
 
-### 🗑️ 已清理之舊五子棋專屬檔案
-- [x] 刪除 `assets/fonts/` 舊五子棋字型（`NotoSansTC-Regular.otf`、`NotoEmoji-Regular.ttf`，釋放約 39 MB）
-- [x] 刪除 `src/core/game.py`（舊五子棋遊戲邏輯）
-- [x] 刪除 `src/core/state.py`（冗餘的舊狀態容器，已整併入 `environment.py`）
-- [x] 刪除 `src/ai/ai.py`（舊五子棋 Minimax AI）
-- [x] 刪除 `src/ai/heuristic.py`（舊五子棋啟發式估值）
-- [x] 刪除 `src/ui/i18n.py`（舊五子棋多國語系字串）
-
 ---
 
 ## 5. 實作階段性工作清單 (Implementation Checklist)
@@ -211,12 +203,12 @@ Learn2Slither/
 
 ### Phase 6: 訓練產出、測試與規範驗收
 - [x] 執行 `flake8` 檢驗（`make norm`），確保整個專案程式碼風格零錯誤、零警告。
-- [ ] 執行訓練並生成必備模型檔：
+- [x] 執行訓練並生成必備模型檔：
   - `models/1sess.txt`（訓練 1 個 session）
   - `models/10sess.txt`（訓練 10 個 sessions）
   - `models/100sess.txt`（訓練 100 個 sessions）
   - `models/1000sess.txt`（充分訓練，長度能達到 10 格以上並長效存活）
-- [ ] 撰寫單元測試 `tests/test_snake.py`，確認環境與規則 100% 正確。
+- [x] 撰寫單元測試 `tests/test_snake.py`，確認環境與規則 100% 正確。
 
 ---
 
@@ -234,6 +226,6 @@ Learn2Slither/
 
 ## 7. 加分項目規劃 (Bonus Features)
 
-- [ ] **高長度挑戰**：蛇在結束時長度突破 15、20、25 甚至 30 格。
-- [ ] **精緻視覺化介面**：即時長度與存活時間儀表板、探索率與 Q-value 顯示、歷史最佳紀錄統計。
-- [ ] **動態棋盤尺寸**：支援 `-board-size <N>` 參數，並驗證已訓練的射線模型可泛化適應不同棋盤大小。
+- [x] **高長度挑戰**：蛇在結束時長度突破 15、20、25 甚至 30 格。
+- [x] **精緻視覺化介面**：即時長度與存活時間儀表板、探索率與 Q-value 顯示、歷史最佳紀錄統計。
+- [x] **動態棋盤尺寸**：支援 `-board-size <N>` 參數，並驗證已訓練的射線模型可泛化適應不同棋盤大小。
