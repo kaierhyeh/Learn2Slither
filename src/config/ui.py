@@ -1,5 +1,9 @@
 """UI configuration constants"""
 
+import os
+
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+
 # Pygame keycode mapping for manual control
 try:
     import pygame
@@ -22,6 +26,7 @@ HEADER_HEIGHT = 60
 
 # Colors (R, G, B)
 COLOR_BG = (30, 30, 34)
+COLOR_VISION = (68, 68, 76)
 COLOR_GRID = (50, 50, 55)
 COLOR_SNAKE_HEAD = (0, 160, 255)
 COLOR_SNAKE_BODY = (30, 120, 220)

@@ -1,5 +1,6 @@
 """Game environment engine"""
 
+from collections import deque
 import random
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -80,8 +81,13 @@ class Environment:
             return (0, 0)
         return random.choice(empty_cells)
 
-    def get_vision_cross_string(self) -> str:
-        """Generate terminal cross vision matching 42 Subject specification."""
+    def get_vision(self) -> str:
+        """
+        Generate cross vision based on the head.
+
+        Return:
+            String of the vision map.
+        """
         if len(self.snake_model) == 0:
             return ""
 
@@ -123,7 +129,7 @@ class Environment:
             right_chars.append(cell_char(head_r, c))
         right_chars.append(CHAR_WALL)
 
-        indent = " " * len(left_chars)
+        indent = " " * len(left_chars)  # How far is the head from the left
         lines = []
 
         # UP ray characters
@@ -141,7 +147,17 @@ class Environment:
         return "\n".join(lines)
 
     def get_state(self) -> Tuple[Any, ...]:
-        """Extract compact 20-element state tuple from 4 visible rays."""
+        """
+        Extract compact 20-element state tuple from 4 visible rays.
+
+        state([
+            danger,
+            first_item,
+            distance_bin,
+            saw_green,
+            saw_red,
+        ]) * 4 directions.
+        """
         if len(self.snake_model) == 0:
             return ()
 
@@ -220,7 +236,16 @@ class Environment:
 
     def step(self, action: str) \
             -> Tuple[Tuple[Any, ...], float, bool, Dict[str, Any]]:
-        """Advance the environment by one step given action."""
+        """
+        Advance the environment by one step given action.
+
+        Input:
+            1. self: The module instance.
+            2. action: The action to take.
+
+        Return:
+            (state, reward, if the game is finished, info)
+        """
         if self.game_over:
             return self.get_state(), 0.0, True, {}
 
@@ -282,3 +307,26 @@ class Environment:
 
         self.max_length = max(self.max_length, len(self.snake_model))
         return self.get_state(), reward, False, {}
+
+    def save_snapshot(self) -> Dict[str, Any]:
+        """Save current environment state for step-back (undo) history."""
+        return {
+            "snake_body": list(self.snake_model.body),
+            "green_apples": list(self.green_apples),
+            "red_apple": self.red_apple,
+            "duration": self.duration,
+            "max_length": self.max_length,
+            "game_over": self.game_over,
+            "game_over_reason": self.game_over_reason,
+        }
+
+    def restore_snapshot(self, snapshot: Dict[str, Any]) -> Tuple[Any, ...]:
+        """Restore environment state from a saved snapshot."""
+        self.snake_model.body = deque(snapshot["snake_body"])
+        self.green_apples = list(snapshot["green_apples"])
+        self.red_apple = snapshot["red_apple"]
+        self.duration = snapshot["duration"]
+        self.max_length = snapshot["max_length"]
+        self.game_over = snapshot["game_over"]
+        self.game_over_reason = snapshot["game_over_reason"]
+        return self.get_state()

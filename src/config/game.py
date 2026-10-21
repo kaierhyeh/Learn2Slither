@@ -11,7 +11,7 @@ DIRECTIONS = {
     "RIGHT": (0, 1),
 }
 
-# Object / Vision characters (42 Subject Specification)
+# Object / Vision characters (Subject Specification)
 CHAR_WALL = "W"
 CHAR_HEAD = "H"
 CHAR_BODY = "S"

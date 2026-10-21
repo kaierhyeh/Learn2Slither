@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Generate Q-learning convergence curve (Sessions vs Avg Length & Max Length).
 
@@ -11,6 +12,10 @@ import os
 import random
 import sys
 from typing import Dict, List, Tuple
+
+_SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
@@ -83,7 +88,12 @@ def run_convergence_experiment(
             current_sess += 1
 
         if target_sess in SAVE_SESSIONS:
-            model_path = os.path.join(models_dir, f"{target_sess}sess.txt")
+            sess_str = (
+                f"{target_sess // 1000}k"
+                if target_sess >= 10000
+                else f"{target_sess}"
+            )
+            model_path = os.path.join(models_dir, f"{sess_str}sess.txt")
             agent.save(model_path)
 
         avg_len, max_len, goal_rate = evaluate_agent(agent, env)
@@ -141,7 +151,7 @@ def plot_dual_axis_convergence(
         markerfacecolor=avg_color,
         markeredgecolor=bg_color,
         markeredgewidth=1.5,
-        label="Average Length (Left Axis)",
+        label="Average Length",
         zorder=4,
     )
     line2 = ax2.plot(
@@ -155,23 +165,23 @@ def plot_dual_axis_convergence(
         markerfacecolor=max_color,
         markeredgecolor=bg_color,
         markeredgewidth=1.5,
-        label="Max Length (Right Axis)",
+        label="Max Length",
         zorder=3,
     )
 
-    # 42 Subject Goal Line (Length >= 10 on Left Axis)
+    # Goal Line (Length >= 10 on Left Axis)
     goal_line = ax1.axhline(
         y=10.0,
         color=goal_color,
         linestyle=":",
         linewidth=1.8,
-        label="42 Subject Goal (Avg Length >= 10)",
+        label="Goal (Avg Length >= 10)",
         zorder=2,
     )
     ax1.text(
         1.25,
         10.5,
-        "42 Subject Target (Length >= 10)",
+        "Target (Length >= 10)",
         color=goal_color,
         fontsize=9.5,
         fontweight="bold",
@@ -299,7 +309,7 @@ def plot_dual_axis_convergence(
 
 def main() -> None:
     """Entry point to train checkpoints and render convergence plot."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = os.path.dirname(_SRC_DIR)
     models_dir = os.path.join(base_dir, "models")
     png_path = os.path.join(base_dir, "assets", "img", "convergence_curve.png")
 
@@ -308,5 +318,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     main()

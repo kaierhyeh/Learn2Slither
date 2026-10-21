@@ -1,4 +1,4 @@
-"""UI package"""
+"""UI package."""
 
 from ui.gui import UI
 

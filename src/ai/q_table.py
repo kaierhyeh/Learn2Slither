@@ -3,7 +3,7 @@
 import json
 import os
 import random
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from config.ai import DEFAULT_ALPHA, DEFAULT_EPSILON, DEFAULT_GAMMA
 from config.game import DIRECTIONS
@@ -25,6 +25,15 @@ class QTableAgent:
         self.dontlearn = dontlearn
         self.actions = list(DIRECTIONS.keys())
         self.q_table: Dict[str, Dict[str, float]] = {}
+        self.loaded_model_path: Optional[str] = None
+    # q_table[state][action[DIRECTION][Q value]] =
+    # ie.
+    # "(0, 'G', 0, 1, 0, 0, '0', 1, 0, 0, 0, '0', 1, 0, 0, 1, 'W', 0, 0, 0)": {
+    # "UP": 4.237343184539915,
+    # "LEFT": 0.3123081783458967,
+    # "DOWN": 0.21801081670074163,
+    # "RIGHT": -50.0
+    # }
 
     def get_q_values(self, state: Any) -> Dict[str, float]:
         """Get or initialize Q-values for state."""
@@ -40,15 +49,20 @@ class QTableAgent:
 
         q_dict = self.get_q_values(state)
         max_q = max(q_dict.values())
+        # 15% 隨機選安全的路走
         if self.dontlearn and max_q < 2.0 and random.random() < 0.15:
             safe_actions = [
-                act for act, val in q_dict.items() if val > -2.0
+                act
+                for act, val in q_dict.items()
+                if val > -2.0 and val != 0.0  # 安全且走過的路
             ]
             if safe_actions:
                 return random.choice(safe_actions)
-        # Break ties randomly to avoid directional bias
         best_actions = [act for act, val in q_dict.items() if val == max_q]
-        return random.choice(best_actions)
+        return random.choice(best_actions)  # 避免相同價值的行動總是偏向固定方向
+    # 不在學習模式下當沿著四個觀察射線都沒有看到綠色蘋果時，
+    # 若始終嚴格選擇 Q-value 最大的行動，蛇可能會陷入固定的空間循環，
+    # 所以用 15% 的機率來隨機走安全的路。
 
     def update(
         self,
@@ -64,12 +78,14 @@ class QTableAgent:
 
         key = str(state)
         curr_q = self.get_q_values(state)[action]
-        if done:  # 死亡時沒有未來，target = r
-            target = reward
-        else:
-            next_q_vals = self.get_q_values(next_state).values()
-            target = reward + self.gamma * max(next_q_vals)
+        # 當死亡時因為沒有下一個隨機狀態 s′，
+        # 讓任何狀態只要撞死 1 次就立刻記住 -50.0。
+        if done:
+            self.q_table[key][action] = reward
+            return
 
+        next_q_vals = self.get_q_values(next_state).values()
+        target = reward + self.gamma * max(next_q_vals)
         self.q_table[key][action] = curr_q + self.alpha * (target - curr_q)
 
     def save(self, filepath: str) -> None:
@@ -102,5 +118,6 @@ class QTableAgent:
                 else:
                     normalized[k] = v
             self.q_table = normalized
-        print(f"Load trained model from {filepath}")
+        self.loaded_model_path = filepath
+        print(f"Load trained model from {filepath}.")
         return True

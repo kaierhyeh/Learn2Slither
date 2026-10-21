@@ -11,6 +11,7 @@ from config.ui import (
     COLOR_SNAKE_BODY,
     COLOR_SNAKE_HEAD,
     COLOR_TEXT,
+    COLOR_VISION,
     HEADER_HEIGHT,
     KEY_TO_DIR,
 )
@@ -47,7 +48,10 @@ class UI:
 
             pygame.init()
             pygame.display.set_caption("Learn2Slither")
-            self.screen = pygame.display.set_mode((self.win_w, self.win_h))
+            self.screen = pygame.display.set_mode(
+                (self.win_w, self.win_h),
+                pygame.RESIZABLE,
+            )
             self.clock = pygame.time.Clock()
             self.font = pygame.font.SysFont("monospace", 18, bold=True)
             self.small_font = pygame.font.SysFont("monospace", 13)
@@ -91,6 +95,14 @@ class UI:
             if event.type == pygame.QUIT:
                 return True, False, paused, None, fps
 
+            if event.type == pygame.VIDEORESIZE:
+                self.win_w = max(200, event.w)
+                self.win_h = max(200 + self.header_height, event.h)
+                self.screen = pygame.display.set_mode(
+                    (self.win_w, self.win_h),
+                    pygame.RESIZABLE,
+                )
+
             if event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_q):
                     return True, False, paused, None, fps
@@ -100,6 +112,8 @@ class UI:
                         step_triggered = True
                     else:
                         paused = not paused
+                elif event.key == pygame.K_r:
+                    manual_action = "UNDO"
                 elif event.key in active_key_to_dir:
                     manual_action = active_key_to_dir[event.key]
                     if step_by_step:
@@ -137,6 +151,19 @@ class UI:
 
         self.screen.fill(COLOR_BG)
 
+        win_w, win_h = self.screen.get_size()
+        avail_w = max(self.board_size * 8, win_w)
+        avail_h = max(self.board_size * 8, win_h - self.header_height)
+        cell_size = max(
+            8,
+            min(avail_w // self.board_size, avail_h // self.board_size),
+        )
+        board_px = cell_size * self.board_size
+        ox = max(0, (win_w - board_px) // 2)
+        oy = self.header_height + max(
+            0, (win_h - self.header_height - board_px) // 2
+        )
+
         # 1. Header info
         mode_str = "STEP" if step_by_step else ("PAUSE" if paused else "AUTO")
         info_text = (
@@ -147,74 +174,105 @@ class UI:
         txt_surf = self.font.render(info_text, True, COLOR_TEXT)
         self.screen.blit(txt_surf, (12, 10))
 
-        hint_text = "[SPACE]: Step/Pause | [ARROWS/WASD]: Move | [+/-]: Speed"
+        hint_text = (
+            "[SPACE]: Step/Pause | [R]: Undo | [ARROWS/WASD]: Move | [+/-]"
+        )
         hint_surf = self.small_font.render(hint_text, True, (160, 160, 170))
         self.screen.blit(hint_surf, (12, 34))
 
-        # 2. Grid lines
-        ox, oy = 0, self.header_height
+        # 2. Highlight 4-directional vision rays from snake head in gray
+        if env.snake:
+            hr, hc = env.snake[0]
+            for c in range(self.board_size):
+                rect = pygame.Rect(
+                    ox + c * cell_size,
+                    oy + hr * cell_size,
+                    cell_size,
+                    cell_size,
+                )
+                pygame.draw.rect(self.screen, COLOR_VISION, rect)
+            for r in range(self.board_size):
+                rect = pygame.Rect(
+                    ox + hc * cell_size,
+                    oy + r * cell_size,
+                    cell_size,
+                    cell_size,
+                )
+                pygame.draw.rect(self.screen, COLOR_VISION, rect)
+
+        # 3. Grid lines
         for r in range(self.board_size + 1):
             pygame.draw.line(
                 self.screen,
                 COLOR_GRID,
-                (ox, oy + r * self.cell_size),
-                (ox + self.board_px, oy + r * self.cell_size),
+                (ox, oy + r * cell_size),
+                (ox + board_px, oy + r * cell_size),
                 1,
             )
         for c in range(self.board_size + 1):
             pygame.draw.line(
                 self.screen,
                 COLOR_GRID,
-                (ox + c * self.cell_size, oy),
-                (ox + c * self.cell_size, oy + self.board_px),
+                (ox + c * cell_size, oy),
+                (ox + c * cell_size, oy + board_px),
                 1,
             )
+
+        apple_pad = max(2, cell_size // 12)
+        snake_pad = max(1, cell_size // 16)
+        apple_radius = max(2, cell_size // 8)
+        snake_radius = max(2, cell_size // 10)
 
         # 3. Green apples
         for gr, gc in env.green_apples:
             rect = pygame.Rect(
-                ox + gc * self.cell_size + 4,
-                oy + gr * self.cell_size + 4,
-                self.cell_size - 8,
-                self.cell_size - 8,
+                ox + gc * cell_size + apple_pad,
+                oy + gr * cell_size + apple_pad,
+                cell_size - apple_pad * 2,
+                cell_size - apple_pad * 2,
             )
             pygame.draw.rect(
                 self.screen,
                 COLOR_GREEN_APPLE,
                 rect,
-                border_radius=6
+                border_radius=apple_radius,
             )
 
         # 4. Red apple
         if env.red_apple:
             rr, rc = env.red_apple
             rect = pygame.Rect(
-                ox + rc * self.cell_size + 4,
-                oy + rr * self.cell_size + 4,
-                self.cell_size - 8,
-                self.cell_size - 8,
+                ox + rc * cell_size + apple_pad,
+                oy + rr * cell_size + apple_pad,
+                cell_size - apple_pad * 2,
+                cell_size - apple_pad * 2,
             )
             pygame.draw.rect(
                 self.screen,
                 COLOR_RED_APPLE,
                 rect,
-                border_radius=6
+                border_radius=apple_radius,
             )
 
         # 5. Snake body & head
         for idx, (sr, sc) in enumerate(env.snake):
             rect = pygame.Rect(
-                ox + sc * self.cell_size + 3,
-                oy + sr * self.cell_size + 3,
-                self.cell_size - 6,
-                self.cell_size - 6,
+                ox + sc * cell_size + snake_pad,
+                oy + sr * cell_size + snake_pad,
+                cell_size - snake_pad * 2,
+                cell_size - snake_pad * 2,
             )
             color = COLOR_SNAKE_HEAD if idx == 0 else COLOR_SNAKE_BODY
-            pygame.draw.rect(self.screen, color, rect, border_radius=5)
+            pygame.draw.rect(
+                self.screen,
+                color,
+                rect,
+                border_radius=snake_radius,
+            )
 
         pygame.display.flip()
 
-        if not step_by_step and self.clock:
+        if not step_by_step and not paused and self.clock:
             self.clock.tick(fps)
 
     def tick(self, fps: int) -> None:

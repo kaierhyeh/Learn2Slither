@@ -172,7 +172,7 @@ class TestEnvironmentRules(unittest.TestCase):
         env.green_apples = [(2, 5), (0, 0)]
         env.red_apple = (5, 6)
 
-        cross = env.get_vision_cross_string()
+        cross = env.get_vision()
         self.assertIn(CHAR_HEAD, cross)
         self.assertIn(CHAR_WALL, cross)
         self.assertIn(CHAR_GREEN, cross)
