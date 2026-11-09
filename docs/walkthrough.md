@@ -131,10 +131,12 @@ Q(s, a)
   \underbrace{\max_{a'} Q(s',a')}
     _{\text{最佳預期}}
   \right)
-}^{\text{學習值}}
+}^{\text{目標 Q 值}}
 \\
-&= Q(s, a) + \alpha \left[ r + \gamma \cdot \max_{a'} Q(s', a') - Q(s, a) \right]
- \end{aligned}$$
+&= Q(s, a) + \alpha
+\underbrace{\left[ r + \gamma \cdot \max_{a'} Q(s', a') - Q(s, a) \right]}
+  _{\text{當下與目標的 Q 值差}}
+\end{aligned}$$
 
 | 符號 | 名稱 | 在貪食蛇中的意義 |
 | :--- | :--- | :--- |
@@ -148,9 +150,9 @@ Q(s, a)
 | $\gamma$ | **衰減係數 (`0.5`)** | 決定蛇有多「看重未來」（範圍 $0 \sim 1$）。$\gamma$ 越大越有遠見；$\gamma=0$ 則只看眼前這一步的 $r$。 |
 
 > 💡 **為什麼學習率不能設為 1？**<br/>
-> 只有在**完全確定性**（Deterministic）且**完全可觀測**（Fully Observable）的環境（例如固定的迷宮），才能令 $\alpha=1$。而我們的蛇只有四向視野（部分可觀測，Partially Observable），且蘋果是隨機生成的（Stochastic），所以不能設 $\alpha=1$。
+> a. 只有在**完全確定性**（Deterministic）且**完全可觀測**（Fully Observable）的環境（例如固定的迷宮），才能令 $\alpha=1$。而我們的蛇只有四向視野（部分可觀測，Partially Observable），且蘋果是隨機生成的（Stochastic），所以不能設 $\alpha=1$。<br/><br/>
 > b. **$\gamma$ 衰減係數**：把未來的獎勵「傳回」當下。<br/>
-> 若 $\gamma=1$，在未結束的回合中反覆累加未來價值，數學上 Q 值可能會無限膨脹而不收斂；必須加上 $\gamma<1$ 才能保證 Bellman 方程收斂到有限定值。
+> 若 $\gamma=1$，在未結束的回合中反覆累加未來價值，數學上 Q 值可能會無限膨脹而不收斂；必須加上 $\gamma<1$ 才能保證 Bellman 方程收斂到有限定值。<br/><br/>
 > c. **20 維特徵組？**<br/>
 > 4 個方向 $\times$ 每個方向 5 個特徵（`[danger, first_item, distance_bin, saw_green, saw_red]`）。
 
@@ -172,7 +174,17 @@ $$\text{Action} = \begin{cases} \text{隨機動作} \in \{\text{UP}, \text{LEFT}
 a. **原因：步數懲罰 `REWARD_STEP = -0.1` 與折扣係數 $\gamma = 0.5$**
   - 當蛇在空曠處轉彎、且視野裡沒有綠蘋果時，走這一步的即時獎勵是 $r = -0.1$。
   - 若走過去之後還需要再轉 2～3 次彎才會看到綠蘋果，因為折扣係數 $\gamma = 0.5$ 每遠一步就衰減一半（$0.5^3 = 0.125$），遠處綠蘋果傳回來的正分尚未完全抵銷步數成本時，這一步的 Q 值就會由連續的 `-0.1` 主導：
-    $$Q(s, a) \approx -0.1 + 0.5(-0.1) + 0.5^2(-0.1) + \dots = \frac{-0.1}{1 - 0.5} = \mathbf{-0.2}$$
+    當Bellman函數收斂時時序差分誤差(TD error)為零：
+  $$\begin{aligned}
+  &Q(s, a) \leftarrow Q(s, a) + \alpha
+  \underbrace{\left[ r + \gamma \cdot \max_{a'} Q(s', a') - Q(s, a) \right]}
+    _{\text{TD error → 0}}
+  \\
+  &\rightarrow r + \gamma \cdot \max_{a'} Q(s', a') - Q(s, a) = 0
+  \\
+  &\rightarrow Q(s, a) = r + \gamma \cdot \max_{a'} Q(s', a')
+  \end{aligned}$$
+  $$Q(s, a) \approx -0.1 + 0.5(-0.1) + 0.5^2(-0.1) + \dots = \frac{-0.1}{1 - 0.5} = \mathbf{-0.2}$$
   - 若某個安全方向距離牆壁或身體為中等距離（`distance_bin = 1`，即 2～4 格），因為再走兩步後需要轉彎，其 Q 值通常會落在 **`-0.1` ～ `-1.8`** 之間。
 
 b. **實測我們訓練出的模型裡，有多少「安全活路」的 Q 值是負數？**
@@ -249,17 +261,18 @@ e. `saw_red`（布林值 `0` 或 `1`）：鄰近 1 格是否為紅蘋果。
 
 | 死亡懲罰 (`REWARD_COLLISION`) | 撞死 1 次的 Q 值 ($\alpha=0.1$) | 平均長度 (`avg_len`) | 最大長度 (`max_len`) | 達成 $\ge 10$ 比例 | 200 局中誤撞脖子/牆次數 (`avoidable_deaths`) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`-50.0`** *(漸進更新)* | `-5.0` *(大於紅蘋果 `-5.28`)* | `23.79` | `51` | `197 / 200` (98.5%) | `12` 次 |
-| **`-100.0`** *(漸進更新)* | `-10.0` | `21.70` | `38` | `196 / 200` (98.0%) | `3` 次 |
-| **`-200.0`** *(漸進更新)* | `-20.0` *(小於紅蘋果 `-10`)* | `22.38` | `45` | `198 / 200` (99.0%) | `2` 次 |
-| **`-500.0`** *(漸進更新)* | `-50.0` *(遠小於紅蘋果 `-10`)* | `21.98` | `45` | **`199 / 200` (99.5%)** | **`0` 次** |
-| **`-5000.0`** *(漸進更新)* | `-500.0` | **`17.82`** 📉 | **`36`** 📉 | `185 / 200` (92.5%) 📉 | `2` 次 |
-| **`-50.0` + 終止狀態直接賦值**<br>*(本專案最終採用)* | **`-50.0`** *(1 次到位且鎖定上限)* | **`22.32`** | **`43`** | **`197 / 200` (98.5%)** | **`0` 次** 🏆 |
+| **`-50.0`** | `-5.0` *(大於紅蘋果 `-5.28`)* | `23.79` | `51` | `197 / 200` (98.5%) | `12` 次 |
+| **`-100.0`** | `-10.0` | `21.70` | `38` | `196 / 200` (98.0%) | `3` 次 |
+| **`-200.0`** | `-20.0` *(小於紅蘋果 `-10`)* | `22.38` | `45` | `198 / 200` (99.0%) | `2` 次 |
+| **`-500.0`** | `-50.0` *(遠小於紅蘋果 `-10`)* | `21.98` | `45` | **`199 / 200` (99.5%)** | **`0` 次** |
+| **`-5000.0`** | `-500.0` | **`17.82`** 📉 | **`36`** 📉 | `185 / 200` (92.5%) 📉 | `2` 次 |
+| **`-50.0` + 終止狀態直接賦值** | **`-50.0`** *(1 次到位且鎖定上限)* | **`22.32`** | **`43`** | **`197 / 200` (98.5%)** | **`0` 次** 🏆 |
 
-#### 🔍 關鍵洞察：為什麼 `-500` 能消除誤撞，但 `-5000` 平均長度卻暴跌至 `17.82`？
+#### 🔍 為什麼 `-500` 能消除誤撞，但 `-5000` 平均長度卻暴跌至 `17.82`？
 
 a. **為什麼適度提高至 `-200 ~ -500` 能減少誤撞？**
    - 當懲罰設為 `-500` 時，即使某個罕見狀態在 10,000 局中只撞牆死過 **1 次**，其 Q 值也會立刻降為 $0 + 0.1 \times (-500) = \mathbf{-50.0}$，遠低於吃紅蘋果的 `-10.0`，因此 `avoidable_deaths` 降為 `0` 次。
+
 b. **為什麼極端懲罰 `-5000` 會引發「恐懼過度擴散（Catastrophic Backup / Over-conservatism）」？**
    - 觀察 Bellman 更新公式：
      $$Q(s, a) \leftarrow Q(s, a) + \alpha \left[ r + \gamma \max_{a'} Q(s', a') - Q(s, a) \right]$$
@@ -267,8 +280,10 @@ b. **為什麼極端懲罰 `-5000` 會引發「恐懼過度擴散（Catastrophic
    - 此時，上一步原本正常的移動動作 $(s, a)$，只因為訓練時有一次隨機探索不小心拐進死胡同，就會瞬間被倒扣：
      $$0.1 \times 0.5 \times (-2500) = \mathbf{-125\text{ 分}}$$
    - 吃一顆綠蘋果僅 `+10` 分，被倒扣 `-125` 分代表**那條路徑就算放了 12 顆綠蘋果，蛇也再也不敢靠近**！結果導致蛇變得極度保守畏縮，只要身體在附近（`distance_bin = 1`）就不敢去吃綠蘋果，使平均長度暴跌至 `17.82`。
+
 c. **為什麼「依訓練局數動態提高死亡懲罰」同樣不可行？**
    - 若早期局數使用 `-50`、晚期局數改用 `-5000`，Q-table 中早晚期更新的狀態會處於完全不同的數值量級（Scale Mismatch），同樣會在死胡同回傳時汙染正常狀態。
+
 d. **解法：維持 `REWARD_COLLISION = -50.0` + 終止狀態（`done == True`）直接賦值**：
    - 當 `done == True`（確定死亡）時，因為沒有下一個隨機狀態 $s'$，在 [`QTableAgent.update()`](../src/ai/q_table.py) 中直接令 `self.q_table[key][action] = reward`（`-50.0`），並於 `--dontlearn` 防迴圈抽樣中排除未探索動作（`val != 0.0`）。
    - 這讓任何狀態**只要撞死 1 次就立刻記住 `-50.0`**（達到與 `-500` 相同的零誤撞效果），同時將最低分上限鎖定在 `-50.0`（杜絕 `-5000` 的恐懼過度擴散）！
@@ -555,12 +570,14 @@ Q(s, a)
   \underbrace{\gamma}_{\text{discount factor}}
   \cdot
   \underbrace{\max_{a'} Q(s',a')}
-    _{\text{estimate of optimal future value}}
+    _{\text{optimal future expectation}}
   \right)
-}^{\text{learned value}}
+}^{\text{Target Q-value}}
 \\
-&= Q(s, a) + \alpha \left[ r + \gamma \max_{a'} Q(s', a') - Q(s, a) \right]
- \end{aligned}$$
+&= Q(s, a) + \alpha
+\underbrace{\left[ r + \gamma \cdot \max_{a'} Q(s', a') - Q(s, a) \right]}
+  _{\text{Temporal-Difference error}}
+\end{aligned}$$
 
 | Symbol | Name | Meaning in Learn2Slither |
 | :--- | :--- | :--- |
@@ -574,9 +591,9 @@ Q(s, a)
 | $\gamma$ | **Discount Factor (`0.5`)** | Controls how much future rewards are valued ($0 \sim 1$). Higher $\gamma$ favors long-term returns; $\gamma=0$ only cares about immediate $r$. |
 
 > 💡 **Why not set Learning Rate $\alpha = 1$?**<br/>
-> Setting $\alpha = 1$ completely overwrites past memory with the most recent transition, which only works in **deterministic and fully observable** environments. Because our snake operates under **partial observability** (4-ray vision) and **stochastic** apple spawns, $\alpha = 0.1$ is essential to average across experiences.
+> a. Setting $\alpha = 1$ completely overwrites past memory with the most recent transition, which only works in **deterministic and fully observable** environments. Because our snake operates under **partial observability** (4-ray vision) and **stochastic** apple spawns, $\alpha = 0.1$ is essential to average across experiences.<br/><br/>
 > b. **Why is Discount Factor $\gamma < 1$ necessary?**<br/>
-> $\gamma$ propagates future rewards back to earlier steps. If $\gamma = 1$, Q-values in continuing loops can diverge to $\infty$; setting $\gamma = 0.5 < 1$ guarantees mathematical convergence while prioritizing nearer apples.
+> $\gamma$ propagates future rewards back to earlier steps. If $\gamma = 1$, Q-values in continuing loops can diverge to $\infty$; setting $\gamma = 0.5 < 1$ guarantees mathematical convergence while prioritizing nearer apples.<br/><br/>
 > c. **Why a 20-Element State Tuple?**<br/>
 > 4 directions $\times$ 5 features per direction (`[danger, first_item, distance_bin, saw_green, saw_red]`).
 
@@ -598,7 +615,17 @@ Completely safe paths often have **negative Q-values** (`-1.8` ~ `-0.01`):
 a. **Cause: Step Penalty `REWARD_STEP = -0.1` & Discount Factor $\gamma = 0.5$**
   - When maneuvering in open space with no visible green apple, each step incurs an immediate reward of $r = -0.1$.
   - If reaching a green apple requires 2–3 turns ahead, the discount factor $\gamma = 0.5$ attenuates distant rewards by half per step ($0.5^3 = 0.125$). Consequently, steps that do not immediately see an apple are dominated by the cumulative step penalty:
-    $$Q(s, a) \approx -0.1 + 0.5(-0.1) + 0.5^2(-0.1) + \dots = \frac{-0.1}{1 - 0.5} = \mathbf{-0.2}$$
+    When the Bellman update converges, the Temporal-Difference error (TD error) approaches zero:
+  $$\begin{aligned}
+  &Q(s, a) \leftarrow Q(s, a) + \alpha
+  \underbrace{\left[ r + \gamma \cdot \max_{a'} Q(s', a') - Q(s, a) \right]}
+    _{\text{TD error } \to 0}
+  \\
+  &\implies r + \gamma \cdot \max_{a'} Q(s', a') - Q(s, a) = 0
+  \\
+  &\implies Q(s, a) = r + \gamma \cdot \max_{a'} Q(s', a')
+  \end{aligned}$$
+  $$Q(s, a) \approx -0.1 + 0.5(-0.1) + 0.5^2(-0.1) + \dots = \frac{-0.1}{1 - 0.5} = \mathbf{-0.2}$$
   - Furthermore, safe corridors at medium distance (`distance_bin = 1`, `2–4` cells) typically settle between **`-0.1` and `-1.8`**.
 
 b. **Empirical Distribution of Positive vs. Negative Safe Q-Values Across Trained Models**
@@ -675,12 +702,12 @@ To test this hypothesis, we benchmarked `REWARD_COLLISION` across `-50.0`, `-100
 
 | Collision Penalty (`REWARD_COLLISION`) | Q-Value After 1 Death ($\alpha=0.1$) | Avg Length (`avg_len`) | Max Length (`max_len`) | $\ge 10$ Rate | Avoidable Deaths in 200 Games (`avoidable_deaths`) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-| **`-50.0`** *(Incremental)* | `-5.0` *(> Red Apple `-5.28`)* | `23.79` | `51` | `197 / 200` (98.5%) | `12` |
-| **`-100.0`** *(Incremental)* | `-10.0` | `21.70` | `38` | `196 / 200` (98.0%) | `3` |
-| **`-200.0`** *(Incremental)* | `-20.0` *(< Red Apple `-10`)* | `22.38` | `45` | `198 / 200` (99.0%) | `2` |
-| **`-500.0`** *(Incremental)* | `-50.0` *(<< Red Apple `-10`)* | `21.98` | `45` | **`199 / 200` (99.5%)** | **`0`** |
-| **`-5000.0`** *(Incremental)* | `-500.0` | **`17.82`** 📉 | **`36`** 📉 | `185 / 200` (92.5%) 📉 | `2` |
-| **`-50.0` + Direct Terminal Update**<br>*(Adopted in Our Project)* | **`-50.0`** *(Immediate & Bounded)* | **`22.32`** | **`43`** | **`197 / 200` (98.5%)** | **`0`** 🏆 |
+| **`-50.0`** | `-5.0` *(> Red Apple `-5.28`)* | `23.79` | `51` | `197 / 200` (98.5%) | `12` |
+| **`-100.0`** | `-10.0` | `21.70` | `38` | `196 / 200` (98.0%) | `3` |
+| **`-200.0`** | `-20.0` *(< Red Apple `-10`)* | `22.38` | `45` | `198 / 200` (99.0%) | `2` |
+| **`-500.0`** | `-50.0` *(<< Red Apple `-10`)* | `21.98` | `45` | **`199 / 200` (99.5%)** | **`0`** |
+| **`-5000.0`** | `-500.0` | **`17.82`** 📉 | **`36`** 📉 | `185 / 200` (92.5%) 📉 | `2` |
+| **`-50.0` + Direct Terminal Update** | **`-50.0`** *(Immediate & Bounded)* | **`22.32`** | **`43`** | **`197 / 200` (98.5%)** | **`0`** 🏆 |
 
 #### 🔍 Key Insights: Why `-500` Eliminates Avoidable Deaths, While `-5000` Crashes Average Length to `17.82`
 
